@@ -307,7 +307,7 @@ def log_memory_stats(
 
 
 class Float8Handler:
-    def __init__(self, enable_fp8_training: bool, dp_shard: int):
+    def __init__(self, enable_fp8_training: bool, dp_shard_enabled: bool):
         self.enabled = enable_fp8_training
 
         if not self.enabled:
@@ -320,21 +320,18 @@ class Float8Handler:
                 "torchao is not installed. Please install it to use float8 linear layers."
             ) from e
 
-        dp_shard_enabled = dp_shard > 1
         # Mutates the model inplace replacing instances of torch.nn.Linear with Float8Linear
 
         # in torchtitan they also check if this is explicitly set - this implementation is
         # more opinionated if fsdp
-        enable_fsdp_float8_all_gather = dp_shard_enabled
-        self.precompute_scale = enable_fsdp_float8_all_gather
-
         self.config = Float8LinearConfig(
-            enable_fsdp_float8_all_gather=enable_fsdp_float8_all_gather,
+            enable_fsdp_float8_all_gather=dp_shard_enabled,
             force_recompute_fp8_weight_in_bwd=True,
             cast_config_input=CastConfig(scaling_type=ScalingType.DYNAMIC),
             cast_config_weight=CastConfig(scaling_type=ScalingType.DYNAMIC),
             cast_config_grad_output=CastConfig(scaling_type=ScalingType.DYNAMIC),
         )
+        self.precompute_scale = dp_shard_enabled
         self.enabled = True
 
     def convert_to_float8_training(self, model: nn.Module):
