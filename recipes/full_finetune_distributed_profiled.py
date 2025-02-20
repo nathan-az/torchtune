@@ -861,11 +861,11 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                 log.info(
                     f"[rank {self.rank} step {self.fwd_step}] bwd time: {bwd_time}"
                 )
-
-                self._metric_logger.log_dict(
-                    {"fwd_time": fwd_time, "bwd_time": bwd_time},
-                    step=self.fwd_step,
-                )
+                if self._is_rank_zero:
+                    self._metric_logger.log_dict(
+                        {"fwd_time": fwd_time, "bwd_time": bwd_time},
+                        step=self.fwd_step,
+                    )
 
                 self.fwd_step += 1
 
