@@ -858,17 +858,18 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                     # We multiply by world_size to undo FSDP2 gradient normalization.
                     current_loss = current_loss * (self.world_size / num_tokens)
 
+                # during the first step this is redundant, and first step will likely be slower
                 if (
                     self.parallel_dims.dp_enabled
                     and not self._optimizer_in_bwd
                     and self._minimize_all_reduces
+                    and ((idx + 1) % self._gradient_accumulation_steps == 0)
                 ):
-                    if (idx + 1) % self._gradient_accumulation_steps == 0:
-                        self._model.set_is_last_backward(False)
-                        self._model.set_requires_all_reduce(False)
-                    else:
-                        self._model.set_is_last_backward(True)
-                        self._model.set_requires_all_reduce(True)
+                    self._model.set_is_last_backward(True)
+                    self._model.set_requires_all_reduce(True)
+                    log.info(
+                        f"Setting `is_last_backward` and `requires_all_reduce` to `True` on step {self.fwd_step}"
+                    )
 
                 current_loss.backward()
 
@@ -910,6 +911,9 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                         if self.parallel_dims.dp_enabled and self._minimize_all_reduces:
                             self._model.set_is_last_backward(False)
                             self._model.set_requires_all_reduce(False)
+                            log.info(
+                                "Setting `is_last_backward` and `requires_all_reduce` to `False` after optimizer step"
+                            )
 
                     # Update the number of steps when the weights are updated
                     self.global_step += 1
