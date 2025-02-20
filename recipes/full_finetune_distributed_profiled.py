@@ -192,6 +192,7 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         # Training cfg
         self._resume_from_checkpoint = cfg.resume_from_checkpoint
         self._gradient_accumulation_steps = cfg.gradient_accumulation_steps
+        self._minimize_all_reduces = cfg.minimize_all_reduces
         self._optimizer_in_bwd = cfg.get("optimizer_in_bwd", False)
         self._clip_grad_norm = cfg.get("clip_grad_norm", None)
         self._checkpoint_client = CheckpointClient(cfg)
@@ -856,6 +857,19 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
 
                     # We multiply by world_size to undo FSDP2 gradient normalization.
                     current_loss = current_loss * (self.world_size / num_tokens)
+
+                if (
+                    self.parallel_dims.dp_enabled
+                    and not self._optimizer_in_bwd
+                    and self._minimize_all_reduces
+                ):
+                    if (idx + 1) % self._gradient_accumulation_steps == 0:
+                        self._model.set_is_last_backward(False)
+                        self._model.set_requires_all_reduce(False)
+                    else:
+                        self._model.set_is_last_backward(True)
+                        self._model.set_requires_all_reduce(True)
+
                 current_loss.backward()
 
                 torch.cuda.synchronize()
@@ -892,6 +906,10 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                                 grad_norm = grad_norm.full_tensor()
                         self._optimizer.step()
                         self._optimizer.zero_grad(set_to_none=True)
+
+                        if self.parallel_dims.dp_enabled and self._minimize_all_reduces:
+                            self._model.set_is_last_backward(False)
+                            self._model.set_requires_all_reduce(False)
 
                     # Update the number of steps when the weights are updated
                     self.global_step += 1
