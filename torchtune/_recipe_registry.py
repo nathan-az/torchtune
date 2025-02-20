@@ -142,6 +142,12 @@ _ALL_RECIPES = [
         supports_distributed=True,
     ),
     Recipe(
+        name="full_finetune_distributed_profiled",
+        file_path="full_finetune_distributed_profiled.py",
+        configs=[],
+        supports_distributed=True,
+    ),
+    Recipe(
         name="lora_finetune_single_device",
         file_path="lora_finetune_single_device.py",
         configs=[
