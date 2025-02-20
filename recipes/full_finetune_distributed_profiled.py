@@ -613,6 +613,9 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                 reshard_after_forward=reshard_after_forward,
                 dp_mesh=self.world_mesh[dp_mesh_dim_names],
             )
+            log.info(
+                f"[Rank {self.rank}] [DP rank {self.dp_rank}] Sharding Mesh: {self.world_mesh[dp_mesh_dim_names]}"
+            )
 
         with training.set_default_dtype(self._dtype), self._device:
             for m in model.modules():
