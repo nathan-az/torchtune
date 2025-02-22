@@ -833,13 +833,19 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                         # We multiply by world_size to undo FSDP2 gradient normalization.
                         training.scale_grads(self._model, self.world_size / num_tokens)
                         if self._clip_grad_norm is not None:
-                            grad_norm = torch.nn.utils.clip_grad_norm_(
-                                self._model.parameters(),
-                                max_norm=float(self._clip_grad_norm),
+                            grads = [p.grad for p in self._model.paramters()]
+                            grad_norm = torch.nn.utils.get_total_norm(
+                                grads, 2.0, True, True
                             )
-                            # If sharded, collect the DTensor here
                             if isinstance(grad_norm, DTensor):
                                 grad_norm = grad_norm.full_tensor()
+
+                            torch.nn.utils.clip_grads_with_norm_(
+                                self._model.parameters(),
+                                max_norm=float(self._clip_grad_norm),
+                                total_norm=grad_norm,
+                                foreach=True,
+                            )
                         self._optimizer.step()
                         self._optimizer.zero_grad(set_to_none=True)
 
