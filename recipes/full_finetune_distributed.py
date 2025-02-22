@@ -833,7 +833,7 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                         # We multiply by world_size to undo FSDP2 gradient normalization.
                         training.scale_grads(self._model, self.world_size / num_tokens)
                         if self._clip_grad_norm is not None:
-                            grads = [p.grad for p in self._model.paramters()]
+                            grads = [p.grad for p in self._model.parameters()]
                             grad_norm = torch.nn.utils.get_total_norm(
                                 grads, 2.0, True, True
                             )
