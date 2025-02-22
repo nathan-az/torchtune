@@ -22,6 +22,7 @@ from torch.distributed import (
 )
 from torch.distributed._tensor import DTensor
 from torch.distributed.tensor.parallel import parallelize_module
+from torch.nn.utils import clip_grads_with_norm_, get_total_norm
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader, DistributedSampler
 from torchtune import config, modules, training, utils
@@ -834,13 +835,11 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                         training.scale_grads(self._model, self.world_size / num_tokens)
                         if self._clip_grad_norm is not None:
                             grads = [p.grad for p in self._model.parameters()]
-                            grad_norm = torch.nn.utils.get_total_norm(
-                                grads, 2.0, True, True
-                            )
+                            grad_norm = get_total_norm(grads, 2.0, True, True)
                             if isinstance(grad_norm, DTensor):
                                 grad_norm = grad_norm.full_tensor()
 
-                            torch.nn.utils.clip_grads_with_norm_(
+                            clip_grads_with_norm_(
                                 self._model.parameters(),
                                 max_norm=float(self._clip_grad_norm),
                                 total_norm=grad_norm,
