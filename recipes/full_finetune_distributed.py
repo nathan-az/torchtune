@@ -196,6 +196,12 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         self._optimizer_in_bwd = cfg.get("optimizer_in_bwd", False)
 
         # Should we raise an error rather than performing these silent checks like with `_optimizer_in_bwd` and `_clip_grad_norm`?
+        self._minimize_reduce_scatters = (
+            cfg.get("minimize_reduce_scatters", False)
+            and self._gradient_accumulation_steps > 1
+            and not self._optimizer_in_bwd
+            and self.parallel_dims.dp_enabled
+        )
         self._minimize_all_reduces = (
             cfg.get("minimize_all_reduces", False)
             and self._gradient_accumulation_steps > 1
@@ -853,11 +859,14 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                     # We multiply by world_size to undo FSDP2 gradient normalization.
                     current_loss = current_loss * (self.world_size / num_tokens)
 
-                if self._minimize_all_reduces and (
-                    (idx + 1) % self._gradient_accumulation_steps == 0
-                ):
+                if (idx + 1) % self._gradient_accumulation_steps == 0:
+                    if self._minimize_all_reduces:
+                        self._model.set_requires_all_reduce(True)
+                    if self._minimize_reduce_scatters:
+                        self._model.set_requires_gradient_sync(True)
+                        self._model.reshard_after_backward(True)
+
                     self._model.set_is_last_backward(True)
-                    self._model.set_requires_all_reduce(True)
 
                 current_loss.backward()
 
@@ -882,6 +891,13 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                                 grad_norm = grad_norm.full_tensor()
                         self._optimizer.step()
                         self._optimizer.zero_grad(set_to_none=True)
+
+                        if self._minimize_all_reduces:
+                            self._model.set_requires_all_reduce(False)
+                        if self._minimize_reduce_scatters:
+                            self._model.set_requires_gradient_sync(False)
+                            self._model.reshard_after_backward(False)
+                        self._model.set_is_last_backward(False)
 
                         if self._minimize_all_reduces:
                             self._model.set_is_last_backward(False)
