@@ -17,6 +17,7 @@ from omegaconf import DictConfig, ListConfig
 from torch import nn
 from torch.distributed import destroy_process_group, init_process_group
 from torch.distributed._tensor import DTensor
+from torch.distributed.fsdp import FSDPModule
 from torch.distributed.tensor.experimental import implicit_replication
 from torch.distributed.tensor.parallel import parallelize_module
 from torch.optim import Optimizer
@@ -864,9 +865,9 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                         self._model.set_requires_all_reduce(True)
                     if self._minimize_reduce_scatters:
                         self._model.set_requires_gradient_sync(True)
-                        self._model.reshard_after_backward(True)
-
-                    self._model.set_is_last_backward(True)
+                        self._model.set_reshard_after_backward(True)
+                    if isinstance(self._model, FSDPModule):
+                        self._model.set_is_last_backward(True)
 
                 current_loss.backward()
 
@@ -896,12 +897,9 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                             self._model.set_requires_all_reduce(False)
                         if self._minimize_reduce_scatters:
                             self._model.set_requires_gradient_sync(False)
-                            self._model.reshard_after_backward(False)
-                        self._model.set_is_last_backward(False)
-
-                        if self._minimize_all_reduces:
+                            self._model.set_reshard_after_backward(False)
+                        if isinstance(self._model, FSDPModule):
                             self._model.set_is_last_backward(False)
-                            self._model.set_requires_all_reduce(False)
 
                     # Update the number of steps when the weights are updated
                     self.global_step += 1
