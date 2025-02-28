@@ -863,10 +863,10 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                 if (idx + 1) % self._gradient_accumulation_steps == 0:
                     if self._minimize_all_reduces:
                         self._model.set_requires_all_reduce(True)
+                        self._model.set_is_last_backward(True)
                     if self._minimize_reduce_scatters:
                         self._model.set_requires_gradient_sync(True)
                         self._model.set_reshard_after_backward(True)
-                    if isinstance(self._model, FSDPModule):
                         self._model.set_is_last_backward(True)
 
                 current_loss.backward()
@@ -895,10 +895,10 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
 
                         if self._minimize_all_reduces:
                             self._model.set_requires_all_reduce(False)
+                            self._model.set_is_last_backward(False)
                         if self._minimize_reduce_scatters:
                             self._model.set_requires_gradient_sync(False)
                             self._model.set_reshard_after_backward(False)
-                        if isinstance(self._model, FSDPModule):
                             self._model.set_is_last_backward(False)
 
                     # Update the number of steps when the weights are updated
