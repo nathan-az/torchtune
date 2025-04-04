@@ -32,6 +32,12 @@ _ALL_RECIPES = [
         supports_distributed=True,
     ),
     Recipe(
+        name="full_ft_dist_opt",
+        file_path="full_ft_dist_opt.py",
+        configs=[],
+        supports_distributed=True,
+    ),
+    Recipe(
         name="full_finetune_single_device",
         file_path="full_finetune_single_device.py",
         configs=[
