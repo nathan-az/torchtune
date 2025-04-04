@@ -74,11 +74,15 @@ from torchtune.training.precision import (
     set_default_dtype,
     validate_expected_param_dtype,
 )
-from torchtune.training.quantization import get_quantizer_mode
+from torchtune.training.quantization import (
+    convert_to_float8_training,
+    get_quantizer_mode,
+)
 from torchtune.training.seed import set_seed
 
 __all__ = [
     "get_act_offloading_ctx_manager",
+    "convert_to_float8_training",
     "prepare_mha_for_tp",
     "apply_selective_activation_checkpointing",
     "get_dtype",

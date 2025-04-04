@@ -9,6 +9,10 @@ from typing import Callable, Optional
 from torch import nn
 
 from torchao.dtypes import TensorCoreTiledLayout
+from torchao.float8 import (
+    convert_to_float8_training as _convert_to_float8_training_torchao,
+    Float8LinearConfig,
+)
 
 from torchao.quantization import (
     int4_weight_only,
@@ -219,3 +223,21 @@ def swap_lora_linear_with_qat(
                 activation_qat_config,
                 weight_qat_config,
             )
+
+
+def convert_to_float8_training(
+    model: nn.Module,
+) -> nn.Module:
+    """
+    Prepare the model for float8 training by swapping all `nn.Linear` with `Float8Linear`.
+    Args:
+        model (nn.Module): The model to swap linear layers on
+    Returns:
+        (nn.Module) The new model with `Float8Linear`.
+    """
+    fp8_config = Float8LinearConfig(enable_fsdp_float8_all_gather=True)
+    return _convert_to_float8_training_torchao(
+        model,
+        config=fp8_config,
+        module_filter_fn=lambda mod, fqn: fqn != "output",
+    )

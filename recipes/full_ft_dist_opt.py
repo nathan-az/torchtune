@@ -19,6 +19,7 @@ from torch.distributed import destroy_process_group, init_process_group
 from torch.distributed._tensor import DTensor
 from torch.distributed.tensor.parallel import parallelize_module
 from torch.optim import Optimizer
+from torchao.float8 import precompute_float8_dynamic_scale_for_fsdp
 from torchdata.stateful_dataloader import StatefulDataLoader
 from torchdata.stateful_dataloader.sampler import StatefulDistributedSampler
 from torchtune import config, modules, training, utils
@@ -189,6 +190,8 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         self._clip_grad_norm = cfg.get("clip_grad_norm", None)
         self._checkpoint_client = CheckpointClient(cfg)
 
+        self._enable_fp8_training = cfg.get("enable_fp8_training", False)
+
         # Optimizer in backward is not compatible with gradient accumulation or gradient clipping
         if self._optimizer_in_bwd:
             if self._clip_grad_norm is not None:
@@ -354,6 +357,9 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
 
         if self._compile:
             training.compile_loss(self._loss_fn, verbose=self._is_rank_zero)
+
+        if self._enable_fp8_training:
+            model = training.convert_to_float8_training(model)
 
         if self._loss_fn.__class__.__name__ == "CEWithChunkedOutputLoss":
             # set num_output_chunks for model
@@ -887,6 +893,9 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                 # Step the learning rate scheduler
                 if self._lr_scheduler is not None:
                     self._lr_scheduler.step()
+
+                if self._enable_fp8_training and self.dp_degree > 1:
+                    precompute_float8_dynamic_scale_for_fsdp(self._model)
 
                 torch.distributed.all_reduce(running_loss)
                 loss_to_log = running_loss.item()
