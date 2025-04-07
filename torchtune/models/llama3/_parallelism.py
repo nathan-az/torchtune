@@ -15,7 +15,10 @@ from torch.distributed.tensor.parallel import (
 )
 from torch.distributed.tensor.parallel.style import ParallelStyle
 
-from torchao.float8 import Float8ColwiseParallel, Float8RowwiseParallel
+from torchao.float8.float8_tensor_parallel import (
+    Float8ColwiseParallel,
+    Float8RowwiseParallel,
+)
 
 
 def _get_base_llama_tp_plan(
