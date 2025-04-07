@@ -227,15 +227,22 @@ def swap_lora_linear_with_qat(
 
 def convert_to_float8_training(
     model: nn.Module,
+    float8_recipe_name: str = None,
 ) -> nn.Module:
     """
     Prepare the model for float8 training by swapping all `nn.Linear` with `Float8Linear`.
     Args:
         model (nn.Module): The model to swap linear layers on
+        float8_recipe_name (str): optional fp8 recipe name supported by `torchao`
     Returns:
         (nn.Module) The new model with `Float8Linear`.
     """
-    fp8_config = Float8LinearConfig(enable_fsdp_float8_all_gather=True)
+    if float8_recipe_name:
+        fp8_config = Float8LinearConfig.from_recipe_name(float8_recipe_name)
+    else:
+        fp8_config = Float8LinearConfig(
+            enable_fsdp_float8_all_gather=True, force_recompute_fp8_weight_in_bwd=True
+        )
     return _convert_to_float8_training_torchao(
         model,
         config=fp8_config,
