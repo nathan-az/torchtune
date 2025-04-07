@@ -360,7 +360,7 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
 
         if self._enable_fp8_training:
             float8_recipe_name = cfg.get("float8_recipe_name", None)
-            model = training.convert_to_float8_training(model, float8_recipe_name)
+            model = training.convert_to_float8_training(self._model, float8_recipe_name)
 
         if self._loss_fn.__class__.__name__ == "CEWithChunkedOutputLoss":
             # set num_output_chunks for model
