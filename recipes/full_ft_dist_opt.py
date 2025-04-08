@@ -191,6 +191,7 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         self._checkpoint_client = CheckpointClient(cfg)
 
         self._enable_fp8_training = cfg.get("enable_fp8_training", False)
+        self._float8_recipe_name = cfg.get("float8_recipe_name", None)
 
         # Optimizer in backward is not compatible with gradient accumulation or gradient clipping
         if self._optimizer_in_bwd:
@@ -300,6 +301,7 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         checkpoint_dict = self._checkpoint_client.load_base_checkpoint()
 
         self._compile = cfg.get("compile", False)
+            
         self._model = self._setup_model(
             cfg_model=cfg.model,
             enable_activation_checkpointing=self._enable_activation_checkpointing,
@@ -357,10 +359,6 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
 
         if self._compile:
             training.compile_loss(self._loss_fn, verbose=self._is_rank_zero)
-
-        if self._enable_fp8_training:
-            float8_recipe_name = cfg.get("float8_recipe_name", None)
-            model = training.convert_to_float8_training(self._model, float8_recipe_name)
 
         if self._loss_fn.__class__.__name__ == "CEWithChunkedOutputLoss":
             # set num_output_chunks for model
@@ -559,6 +557,9 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
 
         if self._compile:
             training.compile_model(model, verbose=self._is_rank_zero)
+
+        if self._enable_fp8_training:
+            model = training.convert_to_float8_training(model, self._float8_recipe_name)
 
         # Apply tensor parallelism to the model
         if self.parallel_dims.tp_enabled:
