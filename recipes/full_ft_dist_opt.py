@@ -901,6 +901,8 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
 
                 torch.distributed.all_reduce(running_loss)
                 loss_to_log = running_loss.item()
+                # TODO: see about removing this - it is simply to identify the cause of OOMs.
+                torch.cuda.synchronize()
                 pbar.update(1)
                 pbar.set_description(
                     f"{curr_epoch + 1}|{self.global_step}|Loss: {loss_to_log}"
