@@ -28,6 +28,7 @@ def _get_base_llama_tp_training_plan(
     layerwise_colwise_parallel_cls: Type[ParallelStyle] = ColwiseParallel,
     layerwise_rowwise_parallel_cls: Type[ParallelStyle] = RowwiseParallel,
     layerwise_prepare_module_input_cls: Type[ParallelStyle] = PrepareModuleInput,
+    enable_loss_parallel: bool = False,
 ) -> Dict[str, ParallelStyle]:
     """
     Define the Tensor Parallel plan for Llama3 model, which will also be shared with 3.1, 3.2, and 3.3 models.
@@ -37,7 +38,10 @@ def _get_base_llama_tp_training_plan(
             input_layouts=Replicate(), output_layouts=Shard(1)
         ),
         "norm": SequenceParallel(),
-        "output": ColwiseParallel(input_layouts=Shard(1), output_layouts=Replicate()),
+        "output": ColwiseParallel(
+            input_layouts=Shard(1),
+            output_layouts=Shard(1) if enable_loss_parallel else Replicate()
+        ),
         "layers.*.attn": layerwise_prepare_module_input_cls(
             input_layouts=(Shard(1), None),
             desired_input_layouts=(Replicate(), None),
@@ -82,7 +86,7 @@ BASE_LLAMA_TP_INFERENCE_PLAN = {
 
 
 def base_llama_tp_plan(
-    model: nn.Module, inference: bool = False
+    model: nn.Module, inference: bool = False, enable_loss_parallel: bool = False
 ) -> Dict[str, ParallelStyle]:
     """
     Helper function to get the base tensor parallel plan for Llama3 model, which will also be shared with 3.1, 3.2, and 3.3 models
@@ -94,7 +98,7 @@ def base_llama_tp_plan(
     Returns:
         Dict[str, Any]: The tensor parallel plan for Llama3 model.
     """
-    return BASE_LLAMA_TP_INFERENCE_PLAN if inference else BASE_LLAMA_TP_TRAINING_PLAN
+    return BASE_LLAMA_TP_INFERENCE_PLAN if inference else _get_base_llama_tp_training_plan(enable_loss_parallel=enable_loss_parallel)
 
 
 # TODO: expose this once tested
