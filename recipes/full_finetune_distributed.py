@@ -954,11 +954,16 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
 
                     current_loss, current_num_tokens = self._loss_step(batch)
 
-                    current_loss = current_loss * (current_num_tokens / num_tokens)
+                    # multiplying by dp_degree undoes fsdp2 adjustment
+                    current_loss = current_loss * self.dp_degree * (
+                        current_num_tokens
+                        / num_tokens
+                    )
+                    
                     # in tp without loss parallel, the loss calculation is replicated
-                    # across all tokens so we undo this
-                    if not self.enable_loss_parallel:
-                        current_loss /= self.parallel_dims.non_data_parallel_size
+                    # We adjust the loss parallel case to replicate this
+                    if self.enable_loss_parallel:
+                        current_loss *= self.parallel_dims.non_data_parallel_size
 
                     if fwd_step + 1 == len(batches):
                         if self.fsdp_delay_all_reduce:
