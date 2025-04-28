@@ -900,15 +900,15 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         num_tokens = 0
 
         self._profiler.start()
+
+        if self.fsdp_reshard_after_backward is not None:
+            self._model.set_reshard_after_backward(self.fsdp_reshard_after_backward)
         # self.epochs_run should be non-zero when we're resuming from a checkpoint
         for curr_epoch in range(self.epochs_run, self.total_epochs):
             pbar = tqdm(total=self._steps_per_epoch, disable=not self._is_rank_zero)
             self._dataloader.sampler.set_epoch(curr_epoch)
 
             dataloader_iter = iter(self._dataloader)
-            if self.fsdp_reshard_after_backward is not None:
-                self._model.set_reshard_after_backward(self.fsdp_reshard_after_backward)
-
             for update_step in range(self._steps_per_epoch):
                 if (
                     self._is_rank_zero
