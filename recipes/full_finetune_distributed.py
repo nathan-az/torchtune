@@ -237,6 +237,9 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         self._enable_activation_offloading = cfg.get(
             "enable_activation_offloading", False
         )
+        self._activation_offloading_use_streams = cfg.get(
+            "activation_offloading_use_streams", True
+        )
         if self._enable_activation_offloading:
             if device_type != "cuda":
                 raise RuntimeError(
@@ -686,7 +689,7 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
 
         # activation offloading
         self.activations_handling_ctx = training.get_act_offloading_ctx_manager(
-            model, enable_activation_offloading
+            model, enable_activation_offloading, use_streams=self._activation_offloading_use_streams
         )
 
         # Ensure no params and buffers are on meta device
