@@ -40,7 +40,8 @@ def _get_base_llama_tp_training_plan(
         "norm": SequenceParallel(),
         "output": ColwiseParallel(
             input_layouts=Shard(1),
-            output_layouts=Shard(1) if enable_loss_parallel else Replicate()
+            output_layouts=Shard(1) if enable_loss_parallel else Replicate(),
+            use_local_output=not enable_loss_parallel,
         ),
         "layers.*.attn": layerwise_prepare_module_input_cls(
             input_layouts=(Shard(1), None),
