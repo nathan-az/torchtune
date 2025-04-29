@@ -820,9 +820,7 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
 
         if self.enable_loss_parallel:
             from torch.distributed.tensor import distribute_tensor, Shard
-
             labels = distribute_tensor(labels, self.world_mesh["tp"], [Shard(1)])
-            labels = labels.to_local()
 
         if not isinstance(logits, list):
             labels = labels.reshape(-1)
