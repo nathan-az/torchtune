@@ -248,7 +248,13 @@ def convert_to_float8_training(
         (nn.Module) The new model with `Float8Linear`.
     """
     if fp8_recipe_name is not None:
-        fp8_config = Float8LinearConfig.from_recipe_name(fp8_recipe_name)
+        if fp8_recipe_name == "default_fsdp":
+            fp8_config = Float8LinearConfig(
+                enable_fsdp_float8_all_gather=True,
+                force_recompute_fp8_weight_in_bwd=True,
+            )
+        else:
+            fp8_config = Float8LinearConfig.from_recipe_name(fp8_recipe_name)
     else:
         fp8_config = Float8LinearConfig(enable_fsdp_float8_all_gather=True)
     return _convert_to_float8_training_torchao(
