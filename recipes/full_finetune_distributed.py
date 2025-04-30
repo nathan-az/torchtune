@@ -689,7 +689,9 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
 
         # activation offloading
         self.activations_handling_ctx = training.get_act_offloading_ctx_manager(
-            model, enable_activation_offloading, use_streams=self._activation_offloading_use_streams
+            model,
+            enable_activation_offloading,
+            use_streams=self._activation_offloading_use_streams,
         )
 
         # Ensure no params and buffers are on meta device
@@ -823,11 +825,12 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
 
         if self.enable_loss_parallel:
             from torch.distributed.tensor import distribute_tensor, Shard
+
             labels = distribute_tensor(labels, self.world_mesh["tp"], [Shard(1)])
 
         if not isinstance(logits, list):
-            labels = labels.reshape(-1)
-            logits = logits.reshape(-1, logits.size(-1))
+            labels = labels.view(-1)
+            logits = logits.view(-1, logits.size(-1))
 
         # Compute loss
         loss = self._loss_fn(logits, labels)
@@ -956,11 +959,12 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                     current_loss, current_num_tokens = self._loss_step(batch)
 
                     # multiplying by dp_degree undoes fsdp2 adjustment
-                    current_loss = current_loss * self.dp_degree * (
-                        current_num_tokens
-                        / num_tokens
+                    current_loss = (
+                        current_loss
+                        * self.dp_degree
+                        * (current_num_tokens / num_tokens)
                     )
-                    
+
                     # in tp without loss parallel, the loss calculation is replicated
                     # We adjust the loss parallel case to replicate this
                     if self.enable_loss_parallel:
