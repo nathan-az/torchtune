@@ -148,7 +148,6 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         self.world_size, self.rank = utils.get_world_size_and_rank()
         self._is_rank_zero = self.rank == 0
         self.tp_plan = cfg.get("tensor_parallel_plan", None)
-        self.enable_loss_parallel = cfg.get("enable_loss_parallel", False)
         self.tp_degree = cfg.get("tensor_parallel_dim", 1)
         if self.tp_degree > 1 and self.tp_plan is None:
             raise ValueError(
@@ -616,8 +615,6 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
             model = training.prepare_mha_for_tp(model, self.world_mesh["tp"])
             if self.tp_plan is not None:
                 tp_plan_kwargs = {}
-                if self.enable_loss_parallel:
-                    tp_plan_kwargs["enable_loss_parallel"] = self.enable_loss_parallel
 
                 self.tp_plan = config.instantiate(
                     self.tp_plan,
@@ -823,12 +820,6 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         with self.activations_handling_ctx:
             outputs = self._model(**batch)
 
-        # TODO: fix loss parallel after base case corrected
-        # if self.enable_loss_parallel:
-        #     from torch.distributed.tensor import distribute_tensor, Shard
-
-        #     labels = distribute_tensor(labels, self.world_mesh["tp"], [Shard(1)])
-
         if self.linear_loss:
             weight = self._model.linear_projection_weight
             if self.parallel_dims.tp_enabled:
@@ -971,11 +962,6 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                         * self.dp_degree
                         * (current_num_tokens / num_tokens)
                     )
-
-                    # in tp without loss parallel, the loss calculation is replicated
-                    # We adjust the loss parallel case to replicate this
-                    if self.enable_loss_parallel:
-                        current_loss *= self.parallel_dims.non_data_parallel_size
 
                     if fwd_step + 1 == len(batches):
                         if self.fsdp_delay_all_reduce:
