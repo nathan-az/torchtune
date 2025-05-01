@@ -831,14 +831,16 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
 
         if self.linear_loss:
             weight = self._model.linear_projection_weight
+            if self.parallel_dims.tp_enabled:
+                from torch.distributed.tensor import distribute_tensor, Shard
+                # PrepareModuleInput may be more appropriate here?
+                labels = distribute_tensor(labels, self.world_mesh["tp"], [Shard(1)])
             loss = self._loss_fn(weight, outputs, labels)
         else:
             labels = labels.reshape(-1)
             outputs = outputs.reshape(-1, outputs.size(-1))
             loss = self._loss_fn(outputs, labels)
 
-        # Compute loss
-        loss = self._loss_fn(logits, labels)
         # free logits otherwise it peaks backward memory
         del outputs
         
