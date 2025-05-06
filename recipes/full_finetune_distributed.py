@@ -824,7 +824,7 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
             if self.parallel_dims.tp_enabled:
                 from torch.distributed.tensor import distribute_tensor, Shard
                 # PrepareModuleInput may be more appropriate here?
-                labels = distribute_tensor(labels, self.world_mesh["tp"], [Shard(1)])
+                labels = distribute_tensor(labels, outputs.device_mesh, outputs.placements)
             loss = self._loss_fn(weight, outputs, labels)
         else:
             labels = labels.reshape(-1)
