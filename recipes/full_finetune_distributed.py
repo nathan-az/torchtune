@@ -830,6 +830,19 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
             labels = labels.reshape(-1)
             outputs = outputs.reshape(-1, outputs.size(-1))
             loss = self._loss_fn(outputs, labels)
+            
+            # lazily log accuracy on each worker for debugging
+            # cant be easily done in linear losses which don't materialise logits
+            num_tokens = (labels != self._loss_fn.ignore_index).sum()
+            mask = labels != self._loss_fn.ignore_index
+            if isinstance(outputs, list):
+                outputs = torch.vstack(outputs)
+            correct_count = (outputs.argmax(dim=-1)[mask] == labels[mask]).sum()
+        
+            self._metric_logger.log_dict(
+                {"acc": correct_count / num_tokens},
+                step=self.global_step,
+            )
 
         # free logits otherwise it peaks backward memory
         del outputs
