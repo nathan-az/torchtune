@@ -6,7 +6,7 @@
 
 import json
 
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 import jinja2
 from jinja2 import StrictUndefined
@@ -213,6 +213,8 @@ class HuggingFaceModelTokenizer(ModelTokenizer):
             Default: None
         truncation_type (str): type of truncation to apply, either "left" or "right".
             Default is "right".
+        max_seq_len (Optional[int]): Maximum sequence length to truncate to.
+            Default: None.
     """
 
     def __init__(
@@ -222,7 +224,9 @@ class HuggingFaceModelTokenizer(ModelTokenizer):
         tokenizer_config_json_path: Optional[str] = None,
         generation_config_path: Optional[str] = None,
         truncation_type: str = "right",
+        max_seq_len: Optional[int] = None,
     ):
+        self.max_seq_len = max_seq_len
         self.base_tokenizer = HuggingFaceBaseTokenizer(
             tokenizer_json_path=tokenizer_json_path,
             tokenizer_config_json_path=tokenizer_config_json_path,
@@ -260,8 +264,7 @@ class HuggingFaceModelTokenizer(ModelTokenizer):
     def tokenize_messages(
         self,
         messages: list[Message],
-        add_eos: bool = True,
-        max_seq_len: Optional[int] = None,
+        add_end_tokens: bool = True,
     ) -> tuple[list[int], list[bool]]:
         tokenized_messages = []
         mask = []
@@ -275,7 +278,9 @@ class HuggingFaceModelTokenizer(ModelTokenizer):
 
             rendered = self.template.render(
                 messages=current_messages,
-                add_generation_prompt=add_eos if i == len(messages) - 1 else False,
+                add_generation_prompt=add_end_tokens
+                if i == len(messages) - 1
+                else False,
                 **self.special_tokens_mapping,  # We assume that the naming is consistent
                 **self.top_level_variables,
             )
@@ -294,23 +299,35 @@ class HuggingFaceModelTokenizer(ModelTokenizer):
 
             mask.extend([message.masked] * len(delta))
 
-        if add_eos and self.base_tokenizer.eos_id is not None:
+        if add_end_tokens and self.base_tokenizer.eos_id is not None:
             tokenized_messages.append(self.base_tokenizer.eos_id)
             mask.append(False)
 
         # Finally, truncate if necessary
         tokenized_messages = truncate(
             tokens=tokenized_messages,
-            max_seq_len=max_seq_len,
+            max_seq_len=self.max_seq_len,
             eos_id=self.base_tokenizer.eos_id,
             truncation_type=self.truncation_type,
         )
 
         mask = truncate(
             tokens=mask,
-            max_seq_len=max_seq_len,
-            eos_id=True if add_eos else None,
+            max_seq_len=self.max_seq_len,
+            eos_id=True if add_end_tokens else None,
             truncation_type=self.truncation_type,
         )
 
         return tokenized_messages, mask
+
+    def __call__(
+        self, sample: Mapping[str, Any], inference: bool = False
+    ) -> Mapping[str, Any]:
+        """
+        Apply ``tokenize_messages`` to the "messages" field in the sample.
+        """
+        messages = sample.pop("messages")
+        tokens, mask = self.tokenize_messages(messages, add_end_tokens=not inference)
+        sample["tokens"] = tokens
+        sample["mask"] = mask
+        return sample
