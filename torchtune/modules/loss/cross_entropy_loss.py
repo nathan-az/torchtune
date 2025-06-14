@@ -8,7 +8,13 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import DTensor, Placement, Shard
+from torch.distributed.tensor import (
+    distribute_tensor,
+    DTensor,
+    Partial,
+    Placement,
+    Shard,
+)
 from torch.distributed.tensor.parallel import ColwiseParallel
 
 from torchtune.modules.loss.loss_types import SFTLoss
@@ -51,11 +57,11 @@ class LinearCrossEntropyLoss(SFTLoss, nn.Module):
     def apply_compile_strategy(self, *args, **kwargs):
         """Applies compile only to the compute_cross_entropy function.
         If compiling CE + chunking operation together, memory requirement is higher."""
-        log.warning("Skipping compile loss, as it is not supported at this time")
+        # log.warning("Skipping compile loss, as it is not supported at this time")
         # TODO fix compile and re-enable
-        # self.compute_cross_entropy = torch.compile(
-        #     self.compute_cross_entropy, *args, **kwargs
-        # )
+        self.compute_cross_entropy = torch.compile(
+            self.cross_entropy_loss_fn, *args, **kwargs
+        )
         return self
 
     def set_model_output(self, model: nn.Module) -> None:
@@ -70,8 +76,8 @@ class LinearCrossEntropyLoss(SFTLoss, nn.Module):
 
             tp_plan["output"] = ColwiseParallel(
                 input_layouts=Shard(1),
-                output_layouts=Shard(-1),
-                use_local_output=False,
+                output_layouts=Shard(0),
+                use_local_output=True,
             )
         return tp_plan
 
@@ -81,9 +87,56 @@ class LinearCrossEntropyLoss(SFTLoss, nn.Module):
 
     @property
     def loss_parallel_requires_ctx_manager(self) -> bool:
-        return True
+        return False
 
-    def compute_cross_entropy(
+    @property
+    def cross_entropy_loss_fn(self):
+        # just returns branchless versions of loss function options
+        if self.loss_parallel_enabled:
+            return self.compute_cross_entropy_distributed
+        else:
+            return self.compute_cross_entropy_local
+
+    def compute_cross_entropy_local(
+        self,
+        hidden_chunk: torch.Tensor,
+        target_chunk: torch.Tensor,
+        **kwargs,
+    ) -> torch.Tensor:
+        """Computes cross-entropy by masking tokens, calculating logits and then applying cross-entropy loss.
+
+        Args:
+            hidden_chunk (torch.Tensor): [batch_size, chunk_size, embed_dim]
+            target_chunk (torch.Tensor): [batch_size, chunk_size]
+            **kwargs: allows compatibility with distributed loss function when called selectively
+
+        Returns:
+            torch.Tensor: Sum of cross-entropy loss for non-ignored tokens in the chunk
+
+        Raises:
+            AttributeError: if called before update_model
+        """
+        mask_chunk = target_chunk != self.ignore_index
+        if mask_chunk.sum() == 0:
+            # Unmask 1 token to allow loss to sync with all data parallel workers
+            mask_chunk[0] = True
+
+        target_chunk = target_chunk[mask_chunk]  # [num_valid]
+        hidden_chunk = hidden_chunk[mask_chunk]  # [num_valid, embed_dim]
+
+        # [num_valid, embed_dim] @ [embed_dim, vocab_size]
+        if self.linear_projection is None:
+            raise AttributeError("forward called before update_model")
+        logits = self.linear_projection(hidden_chunk)  # [num_valid, vocab_size]
+
+        return F.cross_entropy(
+            logits.float(),
+            target_chunk,
+            reduction="sum",
+            ignore_index=self.ignore_index,
+        )
+
+    def compute_cross_entropy_distributed(
         self,
         hidden_chunk: torch.Tensor,
         target_chunk: torch.Tensor,
@@ -105,35 +158,42 @@ class LinearCrossEntropyLoss(SFTLoss, nn.Module):
         Raises:
             AttributeError: if called before update_model
         """
+        hidden_chunk = hidden_chunk.reshape(-1, hidden_chunk.shape[-1])
+        target_chunk = target_chunk.reshape(-1)
+
         mask_chunk = target_chunk != self.ignore_index
+
         if mask_chunk.sum() == 0:
             # Unmask 1 token to allow loss to sync with all data parallel workers
             mask_chunk[0] = True
 
         target_chunk = target_chunk[mask_chunk]  # [num_valid]
-        if isinstance(hidden_chunk, DTensor):
-            local_hidden_chunk = hidden_chunk.to_local()[mask_chunk]
-            hidden_chunk = DTensor.from_local(
-                local_hidden_chunk, original_mesh, original_placements
-            )  # [num_valid, embed_dim]
-        else:
-            hidden_chunk = hidden_chunk[mask_chunk]  # [num_valid, embed_dim]
+        local_hidden_chunk = hidden_chunk.to_local()[mask_chunk]
+        hidden_chunk = DTensor.from_local(
+            local_hidden_chunk, original_mesh, original_placements
+        )  # [num_valid, embed_dim]
 
         # [num_valid, embed_dim] @ [embed_dim, vocab_size]
         if self.linear_projection is None:
             raise AttributeError("forward called before update_model")
         logits = self.linear_projection(hidden_chunk)  # [num_valid, vocab_size]
 
+        # used only for actual loss function since it will align to pre-masked size of hidden_chunk
+        target_chunk_shard = distribute_tensor(
+            target_chunk, original_mesh, [Shard(0)] * original_mesh.ndim
+        ).to_local()
+        target_chunk_shard = target_chunk_shard[target_chunk_shard != self.ignore_index]
+
         loss = F.cross_entropy(
             logits.float(),
-            target_chunk,
+            target_chunk_shard,
             reduction="sum",
             ignore_index=self.ignore_index,
         )
-        # the all-reduce later complains if a DTensor is returned
-        if isinstance(loss, DTensor):
-            loss = loss.full_tensor()
-        return loss
+        # is there a cleaner way to do this?
+        return DTensor.from_local(
+            loss, original_mesh, [Partial()] * original_mesh.ndim
+        ).full_tensor()
 
     def forward(
         self,
@@ -170,7 +230,7 @@ class LinearCrossEntropyLoss(SFTLoss, nn.Module):
         # Compute cross-entropy loss for the chunks
         total_loss = 0.0
         for idx in range(len(hidden_chunks)):
-            total_loss += self.compute_cross_entropy(
+            total_loss += self.cross_entropy_loss_fn(
                 hidden_chunks[idx],
                 target_chunks[idx],
                 original_mesh=original_mesh,
