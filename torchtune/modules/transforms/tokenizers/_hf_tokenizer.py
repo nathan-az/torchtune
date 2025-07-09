@@ -274,11 +274,15 @@ class HuggingFaceModelTokenizer(ModelTokenizer):
         return top_level
 
     def render_template(
-        self, messages: list[dict[str, str]], add_eos: bool = True
+        self,
+        messages: list[dict[str, str]],
+        add_eos: bool = True,
+        tools: Optional[list[dict]] = None,
     ) -> str:
         rendered = self.template.render(
             messages=messages,
             add_generation_prompt=add_eos,
+            tools=tools,
             **self.special_tokens_mapping,  # We assume that the naming is consistent
             **self.top_level_variables,
         )
@@ -288,6 +292,7 @@ class HuggingFaceModelTokenizer(ModelTokenizer):
         self,
         messages: list[Message],
         add_eos: bool = True,
+        tools: Optional[list[dict]] = None,
     ) -> tuple[list[int], list[bool]]:
         tokenized_messages = []
         mask = []
@@ -306,6 +311,7 @@ class HuggingFaceModelTokenizer(ModelTokenizer):
             rendered = self.render_template(
                 current_messages,
                 add_eos=add_eos if i == len(messages) - 1 else False,
+                tools=tools,
             )
 
             current_tokens = self.base_tokenizer.encode(rendered, add_eos=False)
@@ -350,7 +356,10 @@ class HuggingFaceModelTokenizer(ModelTokenizer):
         Apply ``tokenize_messages`` to the "messages" field in the sample.
         """
         messages = sample.pop("messages")
-        tokens, mask = self.tokenize_messages(messages, add_eos=not inference)
+        tools = sample.pop("tools", None)
+        tokens, mask = self.tokenize_messages(
+            messages, add_eos=not inference, tools=tools
+        )
         sample["tokens"] = tokens
         sample["mask"] = mask
         return sample
