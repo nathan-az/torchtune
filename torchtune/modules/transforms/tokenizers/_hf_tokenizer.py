@@ -237,6 +237,7 @@ class HuggingFaceModelTokenizer(ModelTokenizer):
         generation_config_path: Optional[str] = None,
         max_seq_len: Optional[int] = None,
         truncation_type: str = "right",
+        use_chat_template: bool = True,
     ):
         self.base_tokenizer = HuggingFaceBaseTokenizer(
             tokenizer_json_path=tokenizer_json_path,
@@ -257,6 +258,7 @@ class HuggingFaceModelTokenizer(ModelTokenizer):
         _env.globals["raise_exception"] = self._raise_helper
 
         self.template = _env.from_string(config["chat_template"])
+        self.use_chat_template = use_chat_template
         self.truncation_type = truncation_type
 
         self.special_tokens_mapping = {}
@@ -308,11 +310,16 @@ class HuggingFaceModelTokenizer(ModelTokenizer):
                 for m in messages[: i + 1]
             ]
 
-            rendered = self.render_template(
-                current_messages,
-                add_eos=add_eos if i == len(messages) - 1 else False,
-                tools=tools,
-            )
+            if self.use_chat_template:
+                rendered = self.render_template(
+                    current_messages,
+                    add_eos=add_eos if i == len(messages) - 1 else False,
+                    tools=tools,
+                )
+            else:
+                rendered = "".join([m["content"] for m in current_messages])
+                if add_eos and i == len(messages) - 1:
+                    rendered += self.base_tokenizer.eos_token
 
             current_tokens = self.base_tokenizer.encode(rendered, add_eos=False)
 
