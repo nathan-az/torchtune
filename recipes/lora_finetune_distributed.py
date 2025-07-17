@@ -142,6 +142,7 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
 
         # Set up the backend for distributed training (NCCL, GLOO, etc.)
         self._enable_async_checkpointing = cfg.get("enable_async_checkpointing", False)
+        self._enable_save_checkpoint = cfg.get("enable_save_checkpoint", True)
         self.fsdp_cpu_offload = cfg.get("fsdp_cpu_offload", False)
         self.distributed_backend = training.get_distributed_backend(
             cfg.device,
@@ -802,6 +803,7 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
                     if (
                         self.global_step % self.save_every_n_steps == 0
                         and curr_epoch != self.total_epochs - 1
+                        and self._enable_save_checkpoint
                     ):
                         self.save_checkpoint(epoch=curr_epoch, full_tensors=False)
 
@@ -823,7 +825,8 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
         self._profiler.stop()
 
         # Save final non-distributed ckpt
-        self.save_checkpoint(epoch=curr_epoch, full_tensors=True)
+        if self._enable_save_checkpoint:
+            self.save_checkpoint(epoch=curr_epoch, full_tensors=True)
 
     def _loss_step(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
         # Shape [b, s], needed for the loss not the model
