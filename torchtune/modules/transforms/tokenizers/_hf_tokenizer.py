@@ -363,3 +363,138 @@ class HuggingFaceModelTokenizer(ModelTokenizer):
         sample["tokens"] = tokens
         sample["mask"] = mask
         return sample
+
+
+class HuggingFaceLazyTokenizer(ModelTokenizer):
+    """
+    A wrapper around Hugging Face model specific tokenizers.
+    This lazily uses the AutoTokenizer, useful for testing.
+
+    Args:
+        tokenizer_dir (str): Path to tokenizer or HuggingFace URI
+        max_seq_len (Optional[int]): maximum sequence length for tokenizing a single list of messages,
+            after which the input will be truncated. Default is None.
+        truncation_type (str): type of truncation to apply, either "left" or "right".
+            Default is "right".
+    """
+
+    def __init__(
+        self,
+        tokenizer_dir: str,
+        *,
+        max_seq_len: Optional[int] = None,
+        truncation_type: str = "right",
+    ):
+        from transformers import AutoTokenizer
+
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_dir)
+        self.max_seq_len = max_seq_len
+        self.truncation_type = truncation_type
+
+        self.special_tokens_to_ids = dict(
+            zip(self.tokenizer.all_special_tokens, self.tokenizer.all_special_ids)
+        )
+        self.set_eos_bos_attributes()
+        self._infer_should_add_bos_eos()
+
+    def set_eos_bos_attributes(self):
+        self.eos_token = self.tokenizer.special_tokens_map.get("eos_token", None)
+        self.eos_id = self.special_tokens_to_ids.get(self.eos_token, None)
+
+        self.bos_token = self.tokenizer.special_tokens_map.get("bos_token", None)
+        self.bos_id = self.special_tokens_to_ids.get(self.bos_token, None)
+
+    def _infer_should_add_bos_eos(self):
+        """
+        Hugging Face tokenizers sometimes add BOS by default. We should infer this to determine
+        whether to add it ourselves in encode. Otherwise we will get duplicate BOS tokens.
+        """
+        self.hf_adds_bos, self.hf_adds_eos = False, False
+        encoded_empty_str = self.tokenizer.encode("")
+
+        if self.bos_id is not None and self.bos_id in encoded_empty_str:
+            self.hf_adds_bos = True
+
+        if self.eos_id is not None and self.eos_id in encoded_empty_str:
+            self.hf_adds_eos = True
+
+    def tokenize_messages(
+        self,
+        messages: list[Message],
+        add_eos: bool = True,
+        tools: Optional[list[dict]] = None,
+    ) -> tuple[list[int], list[bool]]:
+        tokenized_messages = []
+        mask = []
+        previous_tokens = []
+
+        for i, message in enumerate(messages):
+            current_messages = [
+                {
+                    "role": m.role,
+                    "content": m.content[0]["content"],
+                    **({"tool_calls": m.tool_calls} if tools is not None else {}),
+                }
+                for m in messages[: i + 1]
+            ]
+
+            current_tokens = self.tokenizer.apply_chat_template(
+                current_messages,
+                tools=tools,
+                tokenize=True,
+            )
+
+            if self.hf_adds_bos and self.bos_id in current_tokens:
+                del current_tokens[0]
+
+            if self.hf_adds_eos and self.eos_id in current_tokens:
+                del current_tokens[-1]
+
+            delta = current_tokens[len(previous_tokens) :]
+            previous_tokens = current_tokens
+            tokenized_messages.extend(delta)
+
+            mask.extend([message.masked] * len(delta))
+
+        if self.hf_adds_bos:
+            tokenized_messages.insert(0, self.bos_id)
+            mask.insert(0, messages[0].masked)
+
+        if (
+            add_eos
+            and self.eos_id is not None
+            and tokenized_messages[-1] != self.eos_id
+        ):
+            tokenized_messages.append(self.eos_id)
+            mask.append(messages[-1].masked)
+
+        # Finally, truncate if necessary
+        tokenized_messages = truncate(
+            tokens=tokenized_messages,
+            max_seq_len=self.max_seq_len,
+            eos_id=None,
+            truncation_type=self.truncation_type,
+        )
+
+        mask = truncate(
+            tokens=mask,
+            max_seq_len=self.max_seq_len,
+            eos_id=None,
+            truncation_type=self.truncation_type,
+        )
+        return tokenized_messages, mask
+
+    def __call__(
+        self, sample: Mapping[str, Any], inference: bool = False
+    ) -> Mapping[str, Any]:
+        """
+        Apply ``tokenize_messages`` to the "messages" field in the sample.
+        """
+        messages = sample.pop("messages")
+        tools = sample.pop("tools", None)
+        tokens, mask = self.tokenize_messages(
+            messages, add_eos=not inference, tools=tools
+        )
+        sample["tokens"] = tokens
+        sample["mask"] = mask
+        return sample
