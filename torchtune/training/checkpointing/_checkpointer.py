@@ -27,9 +27,15 @@ from torch.distributed.checkpoint import (
     save,
 )
 from torch.distributed.checkpoint.state_dict_loader import _load_state_dict_from_keys
+from torch.distributed.checkpoint.state_dict import (
+    set_state_dict,
+    set_model_state_dict,
+    StateDictOptions,
+)
 
 from torchtune import training
 from torchtune.models import convert_weights
+from torchtune.modules.optim import OptimizerInBackward
 from torchtune.training.checkpointing._utils import (
     ADAPTER_CONFIG_FNAME,
     ADAPTER_MODEL_FNAME,
@@ -48,6 +54,7 @@ from torchtune.training.checkpointing._utils import (
     SHARD_FNAME,
     SUFFIXES_TO_NOT_COPY,
 )
+from torchtune.training.memory import OptimizerInBackwardWrapper
 from torchtune.utils import get_logger, get_world_size_and_rank, log_rank_zero
 
 logger = get_logger("DEBUG")
@@ -114,11 +121,9 @@ class _CheckpointerInterface(Protocol):
 
     """
 
-    def load_checkpoint(self, **kwargs) -> dict[str, Any]:
-        ...
+    def load_checkpoint(self, **kwargs) -> dict[str, Any]: ...
 
-    def save_checkpoint(self, state_dict: dict[str, Any], **kwargs) -> None:
-        ...
+    def save_checkpoint(self, state_dict: dict[str, Any], **kwargs) -> None: ...
 
 
 class FullModelTorchTuneCheckpointer(_CheckpointerInterface):
@@ -505,9 +510,9 @@ class FullModelHFCheckpointer(_CheckpointerInterface):
             self._recipe_checkpoint = os.path.join(
                 checkpoint_dir_to_load_from, recipe_checkpoint
             )
-            assert os.path.exists(
-                self._recipe_checkpoint
-            ), f"{recipe_checkpoint} not found in {checkpoint_dir_to_load_from}"
+            assert os.path.exists(self._recipe_checkpoint), (
+                f"{recipe_checkpoint} not found in {checkpoint_dir_to_load_from}"
+            )
 
             self._adapter_checkpoint = os.path.join(
                 checkpoint_dir_to_load_from, adapter_checkpoint
@@ -551,6 +556,56 @@ class FullModelHFCheckpointer(_CheckpointerInterface):
         )
 
         return state_dict, weight_map
+
+    def _update_recipe_dcp(self, model, optimizer):
+        if not isinstance(optimizer, OptimizerInBackwardWrapper) and not isinstance(
+            optimizer, OptimizerInBackward
+        ):
+            _init_optim_state(optimizer)
+
+        optim_state_dict = optimizer.state_dict()
+
+        if "param_groups" in optim_state_dict:
+            for param_group in optim_state_dict["param_groups"]:
+                if param_group.get("initial_lr") is None:
+                    param_group["initial_lr"] = 0.0
+
+        updated_dict = {
+            training.OPT_KEY: optim_state_dict,
+            training.SEED_KEY: 0,
+            training.EPOCHS_KEY: 0,
+            training.TOTAL_EPOCHS_KEY: 0,
+            training.MAX_STEPS_KEY: 0,
+            "steps_run": 0,
+            "total_training_steps": 0,
+        }
+
+        checkpoint_path = os.path.join(self._checkpoint_dir, "recipe_state.pt")
+        load(
+            state_dict=updated_dict,
+            storage_reader=FileSystemReader(checkpoint_path),
+            planner=DefaultLoadPlanner(allow_partial_load=True),
+        )
+        options = StateDictOptions(strict=False)
+        if not isinstance(optimizer, OptimizerInBackwardWrapper) and not isinstance(
+            optimizer, OptimizerInBackward
+        ):
+            set_state_dict(
+                model,
+                optimizer,
+                model_state_dict=model.state_dict(),
+                optim_state_dict=updated_dict[training.OPT_KEY],
+                options=options,
+            )
+        else:
+            set_model_state_dict(
+                model=model,
+                model_state_dict=model.state_dict(),
+                options=options,
+            )
+            if training.OPT_KEY in updated_dict:
+                optimizer.load_state_dict(updated_dict[training.OPT_KEY])
+        return updated_dict
 
     def load_checkpoint(self) -> dict[str, Any]:
         """
@@ -723,18 +778,18 @@ class FullModelHFCheckpointer(_CheckpointerInterface):
                 head_dim=self._config.get("head_dim", None),
             )
 
-        if self._should_load_recipe_state:
-            if os.path.exists(self._adapter_checkpoint):
-                adapter_state_dict = safe_torch_load(self._adapter_checkpoint)
-                converted_state_dict[training.ADAPTER_KEY] = adapter_state_dict
-            recipe_state = safe_torch_load(self._recipe_checkpoint, mmap=False)
-            converted_state_dict.update(recipe_state)
-            logger.info(
-                "Loading the recipe state using: "
-                f"\n\tcheckpoint_paths: {[str(path) for path in self._checkpoint_paths]}"
-                f"\n\trecipe_checkpoint: {self._recipe_checkpoint}"
-                f"\n\tadapter_checkpoint: {self._adapter_checkpoint}"
-            )
+        # if self._should_load_recipe_state:
+        #     if os.path.exists(self._adapter_checkpoint):
+        #         adapter_state_dict = safe_torch_load(self._adapter_checkpoint)
+        #         converted_state_dict[training.ADAPTER_KEY] = adapter_state_dict
+        #     recipe_state = safe_torch_load(self._recipe_checkpoint, mmap=False)
+        #     converted_state_dict.update(recipe_state)
+        #     logger.info(
+        #         "Loading the recipe state using: "
+        #         f"\n\tcheckpoint_paths: {[str(path) for path in self._checkpoint_paths]}"
+        #         f"\n\trecipe_checkpoint: {self._recipe_checkpoint}"
+        #         f"\n\tadapter_checkpoint: {self._adapter_checkpoint}"
+        #     )
 
         return converted_state_dict
 
@@ -967,14 +1022,14 @@ class FullModelHFCheckpointer(_CheckpointerInterface):
                     if "text_config" in self._config
                     else self._config
                 )
-                state_dict[
-                    training.ADAPTER_KEY
-                ] = convert_weights.tune_to_peft_adapter_weights(
-                    state_dict[training.ADAPTER_KEY],
-                    num_heads=config["num_attention_heads"],
-                    num_kv_heads=config["num_key_value_heads"],
-                    dim=config["hidden_size"],
-                    head_dim=config.get("head_dim", None),
+                state_dict[training.ADAPTER_KEY] = (
+                    convert_weights.tune_to_peft_adapter_weights(
+                        state_dict[training.ADAPTER_KEY],
+                        num_heads=config["num_attention_heads"],
+                        num_kv_heads=config["num_key_value_heads"],
+                        dim=config["hidden_size"],
+                        head_dim=config.get("head_dim", None),
+                    )
                 )
                 output_path = os.path.join(ckpt_output_dir, ADAPTER_MODEL_FNAME)
                 self._output_fs.mkdirs(output_path, exist_ok=True)
@@ -1010,11 +1065,11 @@ class FullModelHFCheckpointer(_CheckpointerInterface):
                     "PEFT integration for Llama3.2 Vision is not supported, skipping adapter config save"
                 )
             else:
-                state_dict[
-                    training.ADAPTER_CONFIG
-                ] = convert_weights.tune_to_peft_adapter_config(
-                    adapter_config=state_dict[training.ADAPTER_CONFIG],
-                    base_model_name_or_path=self.repo_id,
+                state_dict[training.ADAPTER_CONFIG] = (
+                    convert_weights.tune_to_peft_adapter_config(
+                        adapter_config=state_dict[training.ADAPTER_CONFIG],
+                        base_model_name_or_path=self.repo_id,
+                    )
                 )
                 output_path = (
                     os.path.join(ckpt_output_dir, ADAPTER_CONFIG_FNAME) + ".json"
@@ -1054,7 +1109,7 @@ class FullModelHFCheckpointer(_CheckpointerInterface):
                         single_file_per_rank=False,
                         sync_files=False,
                         cache_staged_state_dict=True,
-                    )
+                    ),
                 )
             else:
                 with self._output_fs.open(recipe_state_path, "wb") as f:

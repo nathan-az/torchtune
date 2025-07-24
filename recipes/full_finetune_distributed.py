@@ -214,9 +214,9 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
 
         self._run_val_every_n_steps = cfg.get("run_val_every_n_steps", None)
         if self._run_val_every_n_steps is not None:
-            assert (
-                cfg.get("dataset_val") is not None
-            ), "run_val_every_n_steps is set but dataset_val is not configured"
+            assert cfg.get("dataset_val") is not None, (
+                "run_val_every_n_steps is set but dataset_val is not configured"
+            )
 
         # Optimizer in backward is not compatible with gradient accumulation or gradient clipping
         if self._optimizer_in_bwd:
@@ -425,7 +425,18 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                     self._logger.warning(
                         f"Failed to load distributed checkpoint: {e}. Training will start from the base checkpoint."
                     )
-
+            elif hasattr(self._checkpoint_client._checkpointer, "_update_recipe_dcp"):
+                optimizer_state_dict = (
+                    self._checkpoint_client._checkpointer._update_recipe_dcp(
+                        self._model,
+                        (
+                            self._optim_ckpt_wrapper
+                            if self._optimizer_in_bwd
+                            else self._optimizer
+                        ),
+                    )
+                )
+                state_dict.update(optimizer_state_dict)
             # Update the recipe state from the checkpoint state dict.
             self._update_recipe_state(state_dict)
 
@@ -565,7 +576,9 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
             assert (
                 cfg_profiler.get("_component_")
                 == "torchtune.training.setup_torch_profiler"
-            ), "Only torch profiler supported currently: component must be `torchtune.training.setup_torch_profiler`"
+            ), (
+                "Only torch profiler supported currently: component must be `torchtune.training.setup_torch_profiler`"
+            )
 
         profiler, profiler_cfg = config.instantiate(cfg_profiler)
 
