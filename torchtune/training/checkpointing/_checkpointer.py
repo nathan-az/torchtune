@@ -1044,8 +1044,21 @@ class FullModelHFCheckpointer(_CheckpointerInterface):
             ]:
                 state_dict.pop(key, None)
             recipe_state_path = os.path.join(ckpt_output_dir, "recipe_state.pt")
-            with self._output_fs.open(recipe_state_path, "wb") as f:
-                torch.save(state_dict, f)
+
+            if self._enable_dcp:
+                save(
+                    state_dict=state_dict,
+                    storage_writer=FileSystemWriter(
+                        recipe_state_path,
+                        thread_count=16,
+                        single_file_per_rank=False,
+                        sync_files=False,
+                        cache_staged_state_dict=True,
+                    )
+                )
+            else:
+                with self._output_fs.open(recipe_state_path, "wb") as f:
+                    torch.save(state_dict, f)
             logger.info(
                 f"Recipe checkpoint of size {os.path.getsize(recipe_state_path) / 1024**3:.2f} GiB "
                 f"saved to {recipe_state_path}"
