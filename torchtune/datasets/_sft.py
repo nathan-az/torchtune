@@ -81,7 +81,7 @@ class SFTDataset(Dataset):
         source (str): path to dataset repository on Hugging Face. For local datasets,
             define source as the data file type (e.g. "json", "csv", "text") and pass
             in the filepath in ``data_files``. See `Hugging Face's
-            <https://huggingface.co/docs/datasets/en/package_reference/loading_methods#datasets.load_dataset.path>`_
+            <https://huggingface.co/docs/datasets/en/package_reference/loading_methods#datasets.load_dataset>`_
             ``load_dataset`` for more details.
         message_transform (Transform): callable that keys into the desired fields in the sample
             and converts text content to a list of :class:`~torchtune.data.Message`. It is expected that the final list
@@ -93,6 +93,9 @@ class SFTDataset(Dataset):
             the Hugging Face `docs <https://huggingface.co/docs/datasets/v2.20.0/process#select-and-filter>`_ for more
             details.
         filter_kwargs (Optional[dict[str, Any]]): additional keyword arguments to pass to ``filter_fn``.
+        num_proc (Optional[int]): number of processes to use for pre-processing. If not specified,
+            will default to single-threaded pre-processing. See Hugging Face's `map
+            <https://huggingface.co/docs/datasets/process#parallel-processing>`_ for more details.
         **load_dataset_kwargs (dict[str, Any]): additional keyword arguments to pass to ``load_dataset``. See Hugging
             Face's `API ref <https://huggingface.co/docs/datasets/en/package_reference/loading_methods#datasets.load_dataset>`_
             for more details.
@@ -106,6 +109,7 @@ class SFTDataset(Dataset):
         model_transform: Transform,
         filter_fn: Optional[Callable] = None,
         filter_kwargs: Optional[dict[str, Any]] = None,
+        num_proc: Optional[int] = None,
         **load_dataset_kwargs: dict[str, Any],
     ) -> None:
         self._message_transform = message_transform
@@ -122,12 +126,19 @@ class SFTDataset(Dataset):
             model_transform=self._model_transform,
         )
 
+        if num_proc is not None:
+            # allows us to apply transform in parallel
+            self._data = self._data.map(
+                self._prepare_sample, num_proc=num_proc
+            )
+            self._prepare_sample = None
+
     def __len__(self):
         return len(self._data)
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         sample = self._data[index]
-        return self._prepare_sample(sample)
+        return self._prepare_sample(sample) if self._prepare_sample else sample
 
 
 class SFTTransform(Transform):
