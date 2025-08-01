@@ -7,6 +7,7 @@
 import os
 import sys
 import time
+from datetime import timedelta
 
 from functools import partial
 from typing import Any, Optional, Union
@@ -18,6 +19,7 @@ from omegaconf import DictConfig, ListConfig
 from torch import nn
 from torch.distributed import destroy_process_group, init_process_group
 from torch.distributed.tensor import DTensor
+from torch.distributed.fsdp import FSDPModule
 from torch.distributed.tensor.parallel import parallelize_module
 from torch.optim import Optimizer
 from torchao.float8 import precompute_float8_dynamic_scale_for_fsdp
@@ -148,7 +150,8 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
             offload_ops_to_cpu=self.fsdp_cpu_offload
             or self._enable_async_checkpointing,
         )
-        init_process_group(self.distributed_backend)
+        timeout = cfg.get("collective_timeout", 600)
+        init_process_group(self.distributed_backend, timeout=timedelta(seconds=timeout))
 
         # Initialize distributed variables
         self.world_size, self.rank = utils.get_world_size_and_rank()
@@ -166,6 +169,7 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         self.context_parallel_rotate_method = cfg.get(
             "context_parallel_rotate_method", "allgather"
         )
+        self._minimize_all_reduces = cfg.get("minimise_all_reduce", True)
         data_shard = cfg.get("data_parallel_shard_dim", -1)  # -1 means to infer
         data_replicate = cfg.get("data_parallel_replicate_dim", 1)
 
@@ -1033,6 +1037,13 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                         torch.distributed.all_reduce(num_tokens)
                         torch.distributed.all_reduce(running_loss)
                         current_loss = current_loss * (self.dp_degree / num_tokens)
+
+                    if isinstance(self._model, FSDPModule) and self._minimize_all_reduces:
+                        is_final_accumulation_step = (
+                            (batch_count + 1) % self._gradient_accumulation_steps == 0
+                        )
+                        self._model.set_is_last_backward(is_final_accumulation_step)
+                        self._model.set_requires_all_reduce(is_final_accumulation_step)
                     current_loss.backward()
 
                 # Optimizer step (if not fused in backward call)

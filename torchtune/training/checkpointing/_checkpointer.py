@@ -435,6 +435,7 @@ class FullModelHFCheckpointer(_CheckpointerInterface):
         keep_last_n_checkpoints: Optional[int] = None,
         enable_dcp: bool = False,
         intermediate_hf_dir_dcp: Optional[str] = None,
+        model_only: bool = False,
     ) -> None:
         self._checkpoint_dir = checkpoint_dir
         self._keep_last_n_checkpoints = keep_last_n_checkpoints
@@ -444,6 +445,7 @@ class FullModelHFCheckpointer(_CheckpointerInterface):
         self._intermediate_hf_dir_dcp = intermediate_hf_dir_dcp
         self._output_dir = output_dir
         self._should_load_recipe_state = should_load_recipe_state
+        self._model_only = model_only
         if resume_from_checkpoint:
             self._should_load_recipe_state = resume_from_checkpoint
             logger.warning(
@@ -829,6 +831,14 @@ class FullModelHFCheckpointer(_CheckpointerInterface):
                 If ``dir_prefix`` is 'step' but ``step`` is None.
                 If ``dir_prefix`` is not 'epoch' or 'step'.
         """
+        if self._model_only:
+            keys = [training.MODEL_KEY]
+            if training.ADAPTER_KEY in state_dict:
+                keys.append(training.ADAPTER_KEY)
+            if training.ADAPTER_CONFIG in state_dict:
+                keys.append(training.ADAPTER_CONFIG)
+            state_dict = {key: state_dict[key] for key in keys}
+
         if dir_prefix == "epoch":
             ckpt_save_dirname = f"epoch_{epoch}"
             ckpt_pattern = r"^epoch_(\d+)"

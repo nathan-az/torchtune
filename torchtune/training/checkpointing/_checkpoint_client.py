@@ -322,7 +322,7 @@ class CheckpointClient:
         else:
             model_state_dict = model.state_dict()
 
-        if intermediate_checkpoint:
+        if intermediate_checkpoint and not getattr(self._checkpointer, "_model_only", False):
             if self._is_rank_zero:
                 log.info("Getting optimizer state dict...")
                 optim_start = time.perf_counter()
