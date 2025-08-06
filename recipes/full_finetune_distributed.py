@@ -14,6 +14,7 @@ from typing import Any, Optional, Union
 from warnings import warn
 
 import torch
+import torch.distributed as dist
 from omegaconf import DictConfig, ListConfig
 
 from torch import nn
@@ -136,6 +137,7 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         device_type = cfg.device
         self._device = utils.get_device(device=device_type)
         self._dtype = training.get_dtype(cfg.dtype, device=self._device)
+        self._logger = utils.get_logger(cfg.log_level)
 
         if self._dtype == torch.float16:
             raise ValueError(
@@ -156,6 +158,13 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         # Initialize distributed variables
         self.world_size, self.rank = utils.get_world_size_and_rank()
         self._is_rank_zero = self.rank == 0
+
+
+        x = torch.tensor([float(rank)], device=self._device)
+        self._logger.info(f"[before]: rank {rank} has {x.item()}")
+        dist.all_reduce(x, op=dist.ReduceOp.SUM)
+        self._logger.info(f"[after]: rank {rank} has {x.item()}")
+        
         self.tp_plan = cfg.get("tensor_parallel_plan", None)
         self.tp_degree = cfg.get("tensor_parallel_dim", 1)
         if self.tp_degree > 1 and self.tp_plan is None:
@@ -194,7 +203,6 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         self._output_dir = cfg.output_dir
         self._log_every_n_steps = cfg.get("log_every_n_steps", 1)
         self._log_peak_memory_stats = cfg.get("log_peak_memory_stats", False)
-        self._logger = utils.get_logger(cfg.log_level)
         if (
             self._log_peak_memory_stats
             and self._device.type not in VALID_BACKENDS_FOR_MEMORY_STATS
