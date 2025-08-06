@@ -160,10 +160,10 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         self._is_rank_zero = self.rank == 0
 
 
-        x = torch.tensor([float(rank)], device=self._device)
-        self._logger.info(f"[before]: rank {rank} has {x.item()}")
+        x = torch.tensor([float(self.rank)], device=self._device)
+        self._logger.info(f"[before]: rank {self.rank} has {x.item()}")
         dist.all_reduce(x, op=dist.ReduceOp.SUM)
-        self._logger.info(f"[after]: rank {rank} has {x.item()}")
+        self._logger.info(f"[after]: rank {self.rank} has {x.item()}")
         
         self.tp_plan = cfg.get("tensor_parallel_plan", None)
         self.tp_degree = cfg.get("tensor_parallel_dim", 1)
