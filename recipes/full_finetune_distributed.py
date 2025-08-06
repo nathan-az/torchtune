@@ -1077,7 +1077,7 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                     if self._record_step_time and self._is_rank_zero:
                         torch.cuda.synchronize()
                         step_time = end_step_time - start_step_time
-                        self._metric_logger.log_dict({"step_time": step_time})
+                        self._metric_logger.log_dict({"step_time": step_time}, step=None)
 
                 # Optimizer step (if not fused in backward call)
                 if (batch_count + 1) % self._gradient_accumulation_steps == 0:
