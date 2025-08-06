@@ -169,7 +169,6 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         self.context_parallel_rotate_method = cfg.get(
             "context_parallel_rotate_method", "allgather"
         )
-        self._minimize_all_reduces = cfg.get("minimise_all_reduce", True)
         data_shard = cfg.get("data_parallel_shard_dim", -1)  # -1 means to infer
         data_replicate = cfg.get("data_parallel_replicate_dim", 1)
 
@@ -210,6 +209,17 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         self._resume_from_checkpoint = cfg.resume_from_checkpoint
         self._gradient_accumulation_steps = cfg.gradient_accumulation_steps
         self._optimizer_in_bwd = cfg.get("optimizer_in_bwd", False)
+
+        
+        self._minimize_all_reduces = cfg.get("minimise_all_reduce", True)
+        if self._minimize_all_reduces and self._gradient_accumulation_steps == 1:
+            warn(
+                message=(
+                    "Minimizing all reduces with 1 gradient accumulation step is not supported. Setting to False."
+                )
+            )
+            self._minimize_all_reduces = False
+        
         self._clip_grad_norm = cfg.get("clip_grad_norm", None)
         self._checkpoint_client = CheckpointClient(cfg)
         self._enable_fp8_training = cfg.get("enable_fp8_training", False)
@@ -1042,8 +1052,16 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                         is_final_accumulation_step = (
                             (batch_count + 1) % self._gradient_accumulation_steps == 0
                         )
-                        self._model.set_is_last_backward(is_final_accumulation_step)
-                        self._model.set_requires_all_reduce(is_final_accumulation_step)
+                        is_first_accumulation_step = (
+                            (batch_count + 1) % self._gradient_accumulation_steps == 1
+                        )
+                        # this can be simplified - confirm whether these setters are non-trivial
+                        if is_final_accumulation_step:
+                            self._model.set_is_last_backward(True)
+                            self._model.set_requires_all_reduce(True)
+                        elif is_first_accumulation_step:
+                            self._model.set_is_last_backward(False)
+                            self._model.set_requires_all_reduce(False)
                     current_loss.backward()
 
                 # Optimizer step (if not fused in backward call)
