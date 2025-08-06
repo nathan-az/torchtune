@@ -211,7 +211,7 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         self._optimizer_in_bwd = cfg.get("optimizer_in_bwd", False)
 
         
-        self._minimize_all_reduces = cfg.get("minimise_all_reduce", True)
+        self._minimize_all_reduces = cfg.get("minimize_all_reduces", True)
         if self._minimize_all_reduces and self._gradient_accumulation_steps == 1:
             warn(
                 message=(
