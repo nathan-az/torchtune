@@ -1074,7 +1074,7 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                             self._model.set_requires_all_reduce(False)
                     current_loss.backward()
                     end_step_time = time.perf_counter()
-                    if self._record_step_time:
+                    if self._record_step_time and self._is_rank_zero:
                         torch.cuda.synchronize()
                         step_time = end_step_time - start_step_time
                         self._metric_logger.log_dict({"step_time": step_time})
