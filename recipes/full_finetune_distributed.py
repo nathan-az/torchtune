@@ -997,6 +997,7 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
 
         # Initialize tokens count and running loss (for grad accumulation)
         t0 = time.perf_counter()
+        step_start_time = t0
         running_loss = 0
         num_tokens = 0
 
@@ -1048,7 +1049,6 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
 
                     # Loss is normalized by default so we multiply by the number of tokens
                     # This way we can normalize by the total number of tokens if we're accumulating gradients
-                    start_step_time = time.perf_counter()
                     current_loss = self._loss_step(batch) * current_num_tokens
                     running_loss += current_loss
                     # For optimizer in backward, we need to normalize before calling backward
@@ -1073,10 +1073,10 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                             self._model.set_is_last_backward(False)
                             self._model.set_requires_all_reduce(False)
                     current_loss.backward()
-                    end_step_time = time.perf_counter()
                     if self._record_step_time and self._is_rank_zero:
                         torch.cuda.synchronize()
-                        step_time = end_step_time - start_step_time
+                        step_time = time.perf_counter() - step_start_time
+                        step_start_time = time.perf_counter()
                         self._metric_logger.log_dict({"step_time": step_time}, step=None)
 
                 # Optimizer step (if not fused in backward call)
