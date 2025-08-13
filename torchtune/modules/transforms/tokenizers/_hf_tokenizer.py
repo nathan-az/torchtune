@@ -394,10 +394,10 @@ class HuggingFaceLazyTokenizer(ModelTokenizer):
         self.special_tokens_to_ids = dict(
             zip(self.tokenizer.all_special_tokens, self.tokenizer.all_special_ids)
         )
-        self.set_eos_bos_attributes()
+        self._set_eos_bos_attributes()
         self._infer_should_add_bos_eos()
 
-    def set_eos_bos_attributes(self):
+    def _set_eos_bos_attributes(self):
         self.eos_token = self.tokenizer.special_tokens_map.get("eos_token", None)
         self.eos_id = self.special_tokens_to_ids.get(self.eos_token, None)
 
@@ -417,6 +417,28 @@ class HuggingFaceLazyTokenizer(ModelTokenizer):
 
         if self.eos_id is not None and self.eos_id in encoded_empty_str:
             self.hf_adds_eos = True
+
+    def encode(
+        self, text: str, add_bos: bool = True, add_eos: bool = True
+    ) -> list[int]:
+        token_ids = self.tokenizer.encode(text)
+        if (
+            add_bos
+            and not self.hf_adds_bos
+            and self.bos_token not in text
+            and self.bos_id
+        ):
+            token_ids.insert(0, self.bos_id)
+        if add_eos and not self.hf_adds_eos and self.eos_id:
+            token_ids.append(self.eos_id)
+        
+        token_ids = truncate(
+            tokens=token_ids,
+            max_seq_len=self.max_seq_len,
+            eos_id=None,
+            truncation_type=self.truncation_type,
+        )
+        return token_ids
 
     def tokenize_messages(
         self,

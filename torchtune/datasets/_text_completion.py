@@ -47,6 +47,7 @@ class TextCompletionDataset(Dataset):
         column: str = "text",
         add_eos: bool = True,
         filter_fn: Optional[Callable] = None,
+        num_proc: Optional[int] = None,
         **load_dataset_kwargs: dict[str, Any],
     ) -> None:
         self._tokenizer = tokenizer
@@ -57,12 +58,19 @@ class TextCompletionDataset(Dataset):
         if filter_fn is not None:
             self._data = self._data.filter(filter_fn)
 
+        self.prepared = False
+        if num_proc is not None:
+            self._data = self._data.map(
+                self._prepare_sample, num_proc=num_proc
+            )
+            self.prepared = True
+
     def __len__(self):
         return len(self._data)
 
     def __getitem__(self, index: int) -> dict[str, list[int]]:
         sample = self._data[index]
-        return self._prepare_sample(sample)
+        return self._prepare_sample(sample) if self.prepared else sample
 
     def _prepare_sample(self, sample: Mapping[str, Any]) -> dict[str, list[int]]:
         prompt = sample[self._column]
