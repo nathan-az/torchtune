@@ -70,7 +70,7 @@ class TextCompletionDataset(Dataset):
 
     def __getitem__(self, index: int) -> dict[str, list[int]]:
         sample = self._data[index]
-        return self._prepare_sample(sample) if self.prepared else sample
+        return sample if self.prepared else self._prepare_sample(sample)
 
     def _prepare_sample(self, sample: Mapping[str, Any]) -> dict[str, list[int]]:
         prompt = sample[self._column]
