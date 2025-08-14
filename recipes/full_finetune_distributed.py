@@ -998,6 +998,7 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         # Initialize tokens count and running loss (for grad accumulation)
         t0 = time.perf_counter()
         step_start_time = t0
+        bwd_step_count = 0
         running_loss = 0
         num_tokens = 0
 
@@ -1077,7 +1078,8 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                         torch.cuda.synchronize()
                         step_time = time.perf_counter() - step_start_time
                         step_start_time = time.perf_counter()
-                        self._metric_logger.log_dict({"step_time": step_time}, step=None)
+                        self._metric_logger.log_dict({"step_time": step_time}, step=bwd_step_count)
+                        bwd_step_count += 1
 
                 # Optimizer step (if not fused in backward call)
                 if (batch_count + 1) % self._gradient_accumulation_steps == 0:

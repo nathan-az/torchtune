@@ -4,6 +4,7 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
+from datetime import timedelta
 import sys
 import time
 
@@ -14,7 +15,7 @@ from warnings import warn
 import torch
 from omegaconf import DictConfig, ListConfig
 
-from torch import nn
+import torch.distributed as dist
 from torch.distributed import destroy_process_group, init_process_group
 from torch.distributed.tensor import DTensor
 
@@ -148,9 +149,15 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
             offload_ops_to_cpu=self.fsdp_cpu_offload
             or self._enable_async_checkpointing,
         )
-        init_process_group(self.distributed_backend)
+        timeout = cfg.get("collective_timeout", 600)
+        init_process_group(self.distributed_backend, timeout=timedelta(seconds=timeout))        
 
         self.world_size, self.rank = utils.get_world_size_and_rank()
+
+        x = torch.tensor([float(self.rank)], device=self._device)
+        self._logger.info(f"[before]: rank {self.rank} has {x.item()}")
+        dist.all_reduce(x, op=dist.ReduceOp.SUM)
+        self._logger.info(f"[after]: rank {self.rank} has {x.item()}")
 
         self._is_rank_zero = self.rank == 0
 
@@ -219,6 +226,8 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
         self._save_adapter_weights_only = cfg.get("save_adapter_weights_only", False)
         self._resume_from_checkpoint = cfg.resume_from_checkpoint
         self._gradient_accumulation_steps = cfg.gradient_accumulation_steps
+
+        self._record_step_time = cfg.get("record_step_time", False)
 
         self._run_val_every_n_steps = cfg.get("run_val_every_n_steps", None)
         if self._run_val_every_n_steps is not None:
@@ -745,6 +754,8 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
 
         # Initialize tokens count and running loss (for grad accumulation)
         t0 = time.perf_counter()
+        step_start_time = t0
+        bwd_step_count = 0
         running_loss = 0
         num_tokens = 0
 
@@ -779,6 +790,13 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
                     current_loss = self._loss_step(batch) * current_num_tokens
                     running_loss += current_loss
                     current_loss.backward()
+                
+                    if self._record_step_time and self._is_rank_zero:
+                        torch.cuda.synchronize()
+                        step_time = time.perf_counter() - step_start_time
+                        step_start_time = time.perf_counter()
+                        self._metric_logger.log_dict({"step_time": step_time}, step=bwd_step_count)
+                        bwd_step_count += 1
 
                 # Step with optimizer
                 if (idx + 1) % self._gradient_accumulation_steps == 0:
