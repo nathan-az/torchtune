@@ -10,7 +10,7 @@ import shutil
 import string
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any, Iterable, Optional, Union
 from warnings import warn
 
 import torch
@@ -75,6 +75,7 @@ RNG_KEY = "rng_state"
 
 # key used for dataloader state
 DATALOADER_KEY = "dataloader"
+VAL_DATALOADER_KEY = "val_dataloader"
 
 
 class ModelType(Enum):
@@ -100,6 +101,7 @@ class ModelType(Enum):
         QWEN2 (str): Qwen2 family of models. See :func:`~torchtune.models.qwen2.qwen2`
         CLIP_TEXT (str): CLIP text encoder. See :func:`~torchtune.models.clip.clip_text_encoder_large`
         T5_ENCODER (str): T5 text encoder. See :func:`~torchtune.models.t5.t5_v1_1_xxl_encoder`
+        QWEN3 (str): Qwen3 family of models. See :func:`~torchtune.models.qwen3.qwen3`
 
     Example:
         >>> # Usage in a checkpointer class
@@ -123,6 +125,7 @@ class ModelType(Enum):
     QWEN2: str = "qwen2"
     CLIP_TEXT: str = "clip_text"
     T5_ENCODER: str = "t5_encoder"
+    QWEN3: str = "qwen3"
 
 
 class FormattedCheckpointFiles:
@@ -176,7 +179,7 @@ class FormattedCheckpointFiles:
         Builds a list of checkpoint filenames from the filename format and max filename.
 
         Returns:
-            List[str]: List of checkpoint filenames.
+            list[str]: list of checkpoint filenames.
 
         Example:
             >>> # Example usage
@@ -225,7 +228,7 @@ def get_path(
 
 def safe_torch_load(
     checkpoint_path: Union[Path, str], weights_only: bool = True, mmap: bool = True
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Utility to load a checkpoint file onto CPU in a safe manner. Provides separate handling for
     safetensors files.
@@ -237,7 +240,7 @@ def safe_torch_load(
         mmap (bool): Whether to mmap from disk into CPU memory. Default: True
 
     Returns:
-        Dict[str, Any]: State dict from the checkpoint file.
+        dict[str, Any]: State dict from the checkpoint file.
 
     Raises:
         ValueError: If the checkpoint file is not found or cannot be loaded.
@@ -278,8 +281,8 @@ def safe_torch_load(
 
 
 def update_state_dict_for_classifier(
-    state_dict: Dict[str, torch.Tensor],
-    model_named_parameters: Iterable[Tuple[str, torch.nn.Parameter]],
+    state_dict: dict[str, torch.Tensor],
+    model_named_parameters: Iterable[tuple[str, torch.nn.Parameter]],
     force_override: bool = False,
 ):
     """
@@ -296,8 +299,8 @@ def update_state_dict_for_classifier(
     ``[num_classes, embed_dim]`` weight in the model. This is done in-place.
 
     Args:
-        state_dict (Dict[str, torch.Tensor]): state dict to be loaded into the classifier model.
-        model_named_parameters (Iterable[Tuple[str, torch.nn.Parameter]]): model named parameters
+        state_dict (dict[str, torch.Tensor]): state dict to be loaded into the classifier model.
+        model_named_parameters (Iterable[tuple[str, torch.nn.Parameter]]): model named parameters
             from ``model.named_parameters()``.
         force_override (bool): Whether to replace ``output.weight`` in ``state_dict`` with the model's
             ``output.weight``, even if the shapes match.
@@ -332,14 +335,13 @@ def update_state_dict_for_classifier(
 def get_largest_iter_folder(
     dir: Union[str, Path], pattern: str = r"^epoch_(\d+)"
 ) -> Union[None, str]:
-
     largest_iter_folder = None
     iter_folders = []
     regex = re.compile(pattern)
 
     fs, _ = url_to_fs(dir)
     # Iterate over the directory contents
-    for fpath in fs.ls(dir):
+    for fpath in fs.ls(dir, detail=False):
         fname = os.path.basename(fpath)
         match = regex.match(fname)
         if match:
@@ -359,7 +361,7 @@ def copy_files(
     input_dir: Union[str, Path],
     output_dir: Union[str, Path],
     *,
-    ignore_suffixes: Optional[List[str]] = None,
+    ignore_suffixes: Optional[list[str]] = None,
     max_file_size_mb: int = 100,
 ) -> None:
     """
@@ -371,7 +373,7 @@ def copy_files(
     Args:
         input_dir (Union[str, Path]): The path to the input directory containing files to be copied.
         output_dir (Union[str, Path]): The path to the output directory where files should be copied.
-        ignore_suffixes (Optional[List[str]]): A list of file suffixes to exclude from copying.
+        ignore_suffixes (Optional[list[str]]): A list of file suffixes to exclude from copying.
           Defaults to ['.pt', '.bin', '.safetensors'] if not provided.
         max_file_size_mb (int): The maximum file size in megabytes to copy. Defaults to 100 MB.
     Returns:
@@ -385,7 +387,6 @@ def copy_files(
     fs, _ = url_to_fs(input_dir)
     max_file_size = max_file_size_mb * 1024 * 1024
     for root, dirs, files in fs.walk(input_dir):
-
         # Filter out directories that start with '.'. E.g. ".cache/"
         dirs[:] = [d for d in dirs if not d.startswith(".")]
 
@@ -430,15 +431,17 @@ def copy_files(
 
 def get_recipe_checkpoint_path(
     output_dir: Union[str, Path],
+    checkpoint_dir: Union[str, Path],
     recipe_checkpoint: Optional[str] = None,
     should_load_recipe_state: bool = False,
 ) -> Optional[str]:
     """
-    If recipe_checkpoint is None, look for recipe_state.pt in {output_dir}/{RECIPE_STATE_DIRNAME}/recipe_state.pt.
+    If recipe_checkpoint is None, look for recipe_state.pt in {checkpoint_dir/recipe_state.pt}.
     This is to make it easier to resume from a previous run, without having to specify the recipe_checkpoint.
 
     Args:
-        output_dir (Union[str, Path]): Directory containing the recipe checkpoint.
+        output_dir (Union[str, Path]): Directory containing the directory that has the recipe checkpoint.
+        checkpoint_dir (Union[str, Path]): Directory containing the recipe checkpoint.
         recipe_checkpoint (Optional[str]): Name of the recipe checkpoint file. Defaults to None.
         should_load_recipe_state (bool): Whether to load the recipe state from the checkpoint.
     Returns:
@@ -453,9 +456,7 @@ def get_recipe_checkpoint_path(
     if recipe_checkpoint:
         recipe_checkpoint_path = os.path.join(output_dir, recipe_checkpoint)
     else:
-        recipe_checkpoint_path = os.path.join(
-            output_dir, RECIPE_STATE_DIRNAME, "recipe_state.pt"
-        )
+        recipe_checkpoint_path = os.path.join(checkpoint_dir, "recipe_state.pt")
 
     fs, _ = url_to_fs(recipe_checkpoint_path)
 
@@ -523,7 +524,7 @@ def get_adapter_checkpoint_path(
 
 
 def get_model_checkpoint_path(
-    checkpoint_files: Union[List[str], Dict[str, str]],
+    checkpoint_files: Union[list[str], dict[str, str]],
     checkpoint_dir: Union[str, Path],
     output_dir: Union[str, Path],
     should_load_recipe_state: bool,
@@ -539,7 +540,7 @@ def get_model_checkpoint_path(
     If checkpoint_fiels is a dictionary, it is converted to a list of formatted checkpoint filenames.
 
     Args:
-        checkpoint_files (Union[List[str], Dict[str, str]]): List or dictionary of checkpoint file names.
+        checkpoint_files (Union[list[str], dict[str, str]]): list or dictionary of checkpoint file names.
             If a dictionary with keys ["filename_format", "max_filename"] is provided,
             it is converted to a list of formatted checkpoint filenames.
         checkpoint_dir (Union[str, Path]): Directory containing the checkpoint files.
@@ -567,15 +568,15 @@ def get_model_checkpoint_path(
     """
 
     def validate_checkpoint_files(
-        checkpoint_files: Union[List[str]],
+        checkpoint_files: Union[list[str]],
         input_dir: Optional[Path],
         missing_ok=False,
-    ) -> List[Path]:
+    ) -> list[Path]:
         """
         Validates that the checkpoint files exist and sorts based on ID.
         """
 
-        checkpoint_paths: List[Path] = []
+        checkpoint_paths: list[Path] = []
         for f in checkpoint_files:
             checkpoint_path = get_path(input_dir, f, missing_ok)
             checkpoint_paths.append(checkpoint_path)
@@ -589,7 +590,7 @@ def get_model_checkpoint_path(
     #   filename_format: model-{}-of-{}.safetensors
     #   max_filename: "00191"
     # becomes checkpoint_files = [model-00001-of-00191.safetensors, model-00002-of-00191,..]
-    if not isinstance(checkpoint_files, List):
+    if not isinstance(checkpoint_files, list):
         # TODO: this can be a function instead of a class
         formatted_checkpoint_files = FormattedCheckpointFiles.from_dict(
             checkpoint_files
@@ -649,7 +650,7 @@ def check_outdir_not_in_ckptdir(
 
 def get_all_checkpoints_in_dir(
     dir: Path, *, pattern: str = r"^epoch_(\d+)"
-) -> List[Path]:
+) -> list[Path]:
     """
     Returns a list of all checkpoints in the given directory.
     The pattern argument is a regular expression that matches the epoch number in the checkpoint filename.
@@ -667,7 +668,7 @@ def get_all_checkpoints_in_dir(
         [PosixPath('/path/to/checkpoints/epoch_1'), PosixPath('/path/to/checkpoints/epoch_2'), ...]
 
     Returns:
-        List[Path]: A list of Path objects representing the checkpoints..
+        list[Path]: A list of Path objects representing the checkpoints..
     """
     checkpoints = []
     regex_to_match = re.compile(pattern)
@@ -684,14 +685,14 @@ def get_all_checkpoints_in_dir(
 
 
 def prune_surplus_checkpoints(
-    checkpoints: List[Path], keep_last_n_checkpoints: int = 1
+    checkpoints: list[Path], keep_last_n_checkpoints: int = 1
 ) -> None:
     """
     Prunes the surplus checkpoints in the given list of checkpoints.
     The function will keep the latest checkpoints based on the param `keep_last_n_checkpoints` and delete the rest.
 
     Args:
-        checkpoints (List[Path]): A list of Path objects representing the checkpoints.
+        checkpoints (list[Path]): A list of Path objects representing the checkpoints.
         keep_last_n_checkpoints (int): The number of checkpoints to keep. Defaults to 1.
 
     Note:
@@ -718,3 +719,34 @@ def prune_surplus_checkpoints(
         shutil.rmtree(checkpoint)
 
     return
+
+
+def get_most_recent_checkpoint(dir: Path) -> Optional[Path]:
+    """
+    Return the most recent checkpoint in the given directory.
+    The function assumes that the checkpoint files are named in the format "epoch_{epoch_number}" or "step_{step_number}".
+    The function will return None if no checkpoint files are found in the directory.
+
+    Args:
+        dir (Path): The directory containing the checkpoints.
+
+    Returns:
+        Optional[Path]: The path to the most recent checkpoint, or None if no checkpoints are found.
+    """
+    # First, check for epochs
+    checkpoints = get_all_checkpoints_in_dir(dir, pattern=r"^epoch_(\d+)")
+
+    # If no epochs found, check for steps
+    if not checkpoints:
+        checkpoints = get_all_checkpoints_in_dir(dir, pattern=r"^step_(\d+)")
+
+    # If no steps found, return None
+    if not checkpoints:
+        return None
+
+    # Finally, loop through checkpoints and return the most recent (non-empty) one
+    checkpoints.sort(key=lambda x: int(x.name.split("_")[-1]))
+    while checkpoints:
+        ckpt = checkpoints.pop()
+        if any(ckpt.iterdir()):
+            return ckpt

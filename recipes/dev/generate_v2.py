@@ -6,7 +6,7 @@
 import itertools
 import sys
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 import torch
 from omegaconf import DictConfig, OmegaConf
@@ -40,7 +40,7 @@ class SingleTurnYAMLToMessages(Transform):
             text: Describe the image in detail.
     """
 
-    def __call__(self, prompt: Dict[str, Any]) -> List[Message]:
+    def __call__(self, prompt: dict[str, Any]) -> list[Message]:
         messages = []
 
         # Iterate through roles and add content
@@ -137,7 +137,7 @@ class InferenceRecipe:
         """The main entry point for generating tokens from a prompt."""
         # 1. Convert input to messages
         messages = self.to_messages(OmegaConf.to_container(cfg.prompt))
-        is_image_input = any([m.contains_media for m in messages])
+        is_multimodal_input = any([m.contains_media for m in messages])
 
         # 2. Apply model transform
         model_inputs = self.model_transform({"messages": messages}, inference=True)
@@ -150,7 +150,7 @@ class InferenceRecipe:
                 batch_size=1,
                 dtype=self._dtype,
                 encoder_max_seq_len=(
-                    self.model_transform.image_seq_len if is_image_input else None
+                    self.model_transform.image_seq_len if is_multimodal_input else None
                 ),
                 decoder_max_seq_len=total_response_length,
             )
@@ -199,7 +199,7 @@ class InferenceRecipe:
         token = sample(logits, temperature=cfg.temperature, top_k=cfg.top_k)
         generated_tokens.append(token.item())
 
-        if is_image_input:
+        if is_multimodal_input:
             # Don't need image info b/c we only support 1 image and it's been
             # processed by the model now
             batch.pop("encoder_input")
@@ -208,7 +208,6 @@ class InferenceRecipe:
 
         # 7. Continue generating
         for i in range(cfg.max_new_tokens):
-
             # Update position and mask for incremental decoding
             batch["input_pos"] = input_pos[None, seq_len]
             batch["mask"] = causal_mask[None, seq_len, None, :]

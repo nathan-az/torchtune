@@ -6,6 +6,7 @@
 
 import os
 import runpy
+import shutil
 import sys
 from pathlib import Path
 
@@ -31,7 +32,6 @@ from torchtune import config
 from torchtune.training.checkpointing._utils import (
     ADAPTER_MODEL_FNAME,
     get_largest_iter_folder,
-    RECIPE_STATE_DIRNAME,
     safe_torch_load,
     SHARD_FNAME,
 )
@@ -47,6 +47,7 @@ class TestKDDistributedRecipe:
             f"epochs={epochs}",
             "dtype=fp32",
             "max_steps_per_epoch=2",
+            "optimizer=torch.optim.AdamW",
             "optimizer.lr=2e-5",
             "log_every_n_steps=1",
             "gradient_accumulation_steps=1",
@@ -144,6 +145,7 @@ class TestKDDistributedRecipe:
             teacher_checkpointer.checkpoint_dir='{ckpt_dir}' \
             teacher_checkpointer.checkpoint_files=[{ckpt_path}] \
             teacher_checkpointer.output_dir={tmpdir} \
+            metric_logger.filename={log_file} \
             tokenizer.path={tokenizer_path} \
             tokenizer.prompt_template=null \
         """.split()
@@ -159,6 +161,17 @@ class TestKDDistributedRecipe:
         monkeypatch.setattr(sys, "argv", cmd_1)
         runpy.run_path(TUNE_PATH, run_name="__main__")
 
+        expected_loss_values = self._fetch_expected_loss_values("llama3")
+        # because there're 3 losses: loss, class_loss, and kd_loss
+        loss_values = get_loss_values_from_metric_logger(log_file)[::3]
+
+        torch.testing.assert_close(
+            loss_values, expected_loss_values, rtol=1e-5, atol=1e-5
+        )
+
+        resumed_log_dir = (tmpdir / "resumed/").mkdir()
+        resumed_log_file = gen_log_file_name(resumed_log_dir)
+
         # Resume training
         epoch_folder = get_largest_iter_folder(tmpdir)
         epoch_folder_minus_one = f"epoch_{int(epoch_folder.split('_')[-1]) - 1}"
@@ -170,13 +183,100 @@ class TestKDDistributedRecipe:
             checkpointer.checkpoint_dir={ckpt_dir} \
             checkpointer.checkpoint_files=[{ckpt_path}]\
             checkpointer.adapter_checkpoint={os.path.join(epoch_folder_minus_one, f"{ADAPTER_MODEL_FNAME}.pt")}
-            checkpointer.recipe_checkpoint={os.path.join(RECIPE_STATE_DIRNAME, "recipe_state.pt")}
+            checkpointer.recipe_checkpoint={os.path.join(epoch_folder_minus_one, "recipe_state.pt")}
             checkpointer.output_dir={tmpdir} \
             teacher_checkpointer._component_=torchtune.training.FullModelTorchTuneCheckpointer \
             teacher_checkpointer.checkpoint_dir='{ckpt_dir}' \
             teacher_checkpointer.checkpoint_files=[{ckpt_path}] \
             teacher_checkpointer.output_dir={tmpdir} \
             resume_from_checkpoint=True \
+            metric_logger.filename={resumed_log_file} \
+            tokenizer.path={tokenizer_path} \
+            tokenizer.prompt_template=null \
+        """.split()
+        cmd_2 = (
+            cmd_2 + self._get_test_config_overrides() + model_config + teacher_config
+        )
+        monkeypatch.setattr(sys, "argv", cmd_2)
+        runpy.run_path(TUNE_PATH, run_name="__main__")
+
+        # Second epoch only
+        expected_loss_values = self._fetch_expected_loss_values("llama3")
+        # because there're 3 losses: loss, class_loss, and kd_loss
+        loss_values = get_loss_values_from_metric_logger(resumed_log_file)[::3]
+
+        torch.testing.assert_close(
+            loss_values[:2], expected_loss_values[2:], rtol=1e-5, atol=1e-5
+        )
+
+    @pytest.mark.integration_test
+    @gpu_test(gpu_count=4)
+    def test_training_state_on_resume_with_async_checkpointing(
+        self, tmpdir, monkeypatch
+    ):
+        """Test whether the recipe state is correctly updated on resume with async checkpointing. Since this
+        is model agnostic, we should run this on the small model only. The test
+        consists of three stages:
+            - Train a model for 2 epochs
+            - Resume training after epoch 1
+            - Make sure final loss matches the expected value of a model successfully resumed from a ckpt
+        """
+
+        ckpt = "llama3_tune"
+        ckpt_path = Path(CKPT_MODEL_PATHS[ckpt])
+        ckpt_dir = ckpt_path.parent
+        log_file = gen_log_file_name(tmpdir)
+        tokenizer_path = Path(TOKENIZER_PATHS["llama3"])
+
+        # Config file needed for model conversion.
+        # Create a second copy for training resume
+        write_hf_ckpt_config(ckpt_dir)
+        write_hf_ckpt_config(tmpdir)
+
+        # Train for two epochs
+        cmd_1 = f"""
+        tune run --nnodes 1 --nproc_per_node 4 knowledge_distillation_distributed \
+            --config llama3_2/8B_to_1B_KD_lora_distributed \
+            output_dir={tmpdir} \
+            checkpointer=torchtune.training.FullModelTorchTuneCheckpointer \
+            checkpointer.checkpoint_dir='{ckpt_dir}' \
+            checkpointer.checkpoint_files=[{ckpt_path}]\
+            checkpointer.output_dir={tmpdir} \
+            teacher_checkpointer._component_=torchtune.training.FullModelTorchTuneCheckpointer \
+            teacher_checkpointer.checkpoint_dir='{ckpt_dir}' \
+            teacher_checkpointer.checkpoint_files=[{ckpt_path}] \
+            teacher_checkpointer.output_dir={tmpdir} \
+            enable_async_checkpointing=True \
+            tokenizer.path={tokenizer_path} \
+            tokenizer.prompt_template=null \
+        """.split()
+
+        model_config = MODEL_TEST_CONFIGS["llama3_lora"]
+        teacher_config = [
+            "teacher_" + config for config in MODEL_TEST_CONFIGS["llama3"]
+        ]
+
+        cmd_1 = (
+            cmd_1 + self._get_test_config_overrides() + model_config + teacher_config
+        )
+        monkeypatch.setattr(sys, "argv", cmd_1)
+        runpy.run_path(TUNE_PATH, run_name="__main__")
+        shutil.rmtree((tmpdir / "epoch_1"))
+
+        # Resume training
+        cmd_2 = f"""
+        tune run --nnodes 1 --nproc_per_node 4 knowledge_distillation_distributed \
+            --config llama3_2/8B_to_1B_KD_lora_distributed \
+            output_dir={tmpdir} \
+            checkpointer=torchtune.training.FullModelTorchTuneCheckpointer \
+            checkpointer.checkpoint_dir={ckpt_dir} \
+            checkpointer.checkpoint_files=[{ckpt_path}]\
+            checkpointer.output_dir={tmpdir} \
+            teacher_checkpointer._component_=torchtune.training.FullModelTorchTuneCheckpointer \
+            teacher_checkpointer.checkpoint_dir='{ckpt_dir}' \
+            teacher_checkpointer.checkpoint_files=[{ckpt_path}] \
+            resume_from_checkpoint=True \
+            enable_async_checkpointing=True \
             metric_logger.filename={log_file} \
             tokenizer.path={tokenizer_path} \
             tokenizer.prompt_template=null \

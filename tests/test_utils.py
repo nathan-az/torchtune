@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from functools import partial
 from io import StringIO
 from pathlib import Path
-from typing import Any, Generator, List, Mapping, Optional, TextIO, Tuple, Union
+from typing import Any, Generator, Mapping, Optional, TextIO, Union
 
 import pytest
 
@@ -27,17 +27,19 @@ CKPT_MODEL_PATHS = {
     "llama2_tune": "/tmp/test-artifacts/small-ckpt-tune-03082024.pt",
     "llama2_meta": "/tmp/test-artifacts/small-ckpt-meta-03082024.pt",
     "llama2_hf": "/tmp/test-artifacts/small-ckpt-hf-03082024.pt",
-    "llama2_reward_hf": "/tmp/test-artifacts/small-ckpt-hf-reward-07122024.pt",
+    "llama3_reward_hf": "/tmp/test-artifacts/small-ckpt-hf-reward-06092025.pt",
     "llama3_tune": "/tmp/test-artifacts/small-ckpt-tune-llama3-05052024.pt",
     "llama2_7b": "/tmp/test-artifacts/llama2-7b-torchtune.pt",
     "llama3_2_vision_hf": "/tmp/test-artifacts/small-ckpt-hf-vision-10172024.pt",
     "llama3_2_vision_meta": "/tmp/test-artifacts/small-ckpt-meta-vision-10172024.pt",
     "llama3_137M": "/tmp/test-artifacts/llama3-hf-04232025/model.safetensors",
+    "llama3_hf_138m": "/tmp/test-artifacts/llama3-hf-06112025/",  # Includes a config file and the safetensors file
 }
 
 TOKENIZER_PATHS = {
     "llama2": "/tmp/test-artifacts/tokenizer.model",
     "llama3": "/tmp/test-artifacts/tokenizer_llama3.model",
+    "llama3_hf_138m": "/tmp/test-artifacts/tokenizer_llama3.model",
 }
 
 # Taken from Open-Orca/SlimOrca-Dedup on Hugging Face:
@@ -97,7 +99,7 @@ class DummyTokenizer(ModelTokenizer, Transform):
     def __init__(self, max_seq_len: Optional[int] = None):
         self.max_seq_len = max_seq_len
 
-    def encode(self, text, add_bos=True, add_eos=True, **kwargs) -> List[int]:
+    def encode(self, text, add_bos=True, add_eos=True, **kwargs) -> list[int]:
         words = text.split()
         tokens = [len(word) for word in words]
         if add_bos:
@@ -108,8 +110,8 @@ class DummyTokenizer(ModelTokenizer, Transform):
 
     def tokenize_messages(
         self,
-        messages: List[Message],
-    ) -> Tuple[List[int], List[bool]]:
+        messages: list[Message],
+    ) -> tuple[list[int], list[bool]]:
         """
         A simplified version of Llama2Tokenizer's ``tokenize_messages`` for testing purposes.
         """
@@ -164,7 +166,7 @@ class DummyTokenizer(ModelTokenizer, Transform):
         return tokenized_messages, mask
 
     def __call__(self, sample: Mapping[str, Any]) -> Mapping[str, Any]:
-        messages: List[Message] = sample.pop("messages")
+        messages: list[Message] = sample.pop("messages")
         images = []
         for message in messages:
             images += message.get_media()
@@ -314,7 +316,7 @@ def set_dtype(dtype: torch.dtype) -> Generator[None, None, None]:
 
 
 @contextmanager
-def captured_output() -> Generator[Tuple[TextIO, TextIO], None, None]:
+def captured_output() -> Generator[tuple[TextIO, TextIO], None, None]:
     new_out, new_err = StringIO(), StringIO()
     old_out, old_err = sys.stdout, sys.stderr
     try:
@@ -341,7 +343,7 @@ def skip_if_lt_python_310(reason: str = "Python 3.10+ required"):
     return pytest.mark.skipif(sys.version_info < (3, 10), reason=reason)
 
 
-def get_loss_values_from_metric_logger(log_file_path: str) -> List[float]:
+def get_loss_values_from_metric_logger(log_file_path: str) -> list[float]:
     """
     Given an output directory containing metric logger .txt file,
     parse the .txt and return a list of losses from each logged iteration.
@@ -378,4 +380,11 @@ def mps_ignored_test() -> bool:
         torch.backends.mps.is_available() and torch.backends.mps.is_built(),
         reason="Test skipped due to torch being compiled with MPS"
         "see https://github.com/pytorch/torchtune/issues/1707 for more information",
+    )
+
+
+def rl_test() -> bool:
+    return pytest.mark.skipif(
+        "not config.getoption('--run-rl-tests')",
+        reason="Only run when --run-rl-tests is given",
     )

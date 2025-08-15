@@ -7,7 +7,6 @@
 import json
 
 from pathlib import Path
-from typing import Tuple
 
 import pytest
 
@@ -218,7 +217,7 @@ class TestHFLlama2FullModelCheckpointer:
     def test_load_save_checkpoint_single_file(
         self,
         single_file_checkpointer: FullModelHFCheckpointer,
-        llama2_hf_checkpoints: Tuple[Path, Path],
+        llama2_hf_checkpoints: tuple[Path, Path],
     ):
         """
         Test ``load_checkpoint`` and ``save_checkpoint`` method within the
@@ -266,8 +265,8 @@ class TestHFLlama2FullModelCheckpointer:
         output_file = Path.joinpath(
             checkpoint_file.parent.parent / "output_dir",
             "epoch_1",
-            SHARD_FNAME.format(cpt_idx="1".zfill(5), num_shards="1".zfill(5)),
-        ).with_suffix(".safetensors")
+            "model.safetensors",
+        )
         output_state_dict = safe_torch_load(output_file)
 
         # We ignore inv_freq as is standard practice and so output dict will have one less key
@@ -276,7 +275,7 @@ class TestHFLlama2FullModelCheckpointer:
     def test_save_load_checkpoint_multiple_file(
         self,
         multi_file_checkpointer: FullModelHFCheckpointer,
-        llama2_hf_checkpoints: Tuple[Path, Path],
+        llama2_hf_checkpoints: tuple[Path, Path],
     ):
         """
         Test ``load_checkpoint`` method within the FullModelCheckpointer for multiple
@@ -322,7 +321,9 @@ class TestHFLlama2FullModelCheckpointer:
         )
         model.load_state_dict(state_dict["model"])
 
-        multi_file_checkpointer.save_checkpoint(state_dict, epoch=1)
+        multi_file_checkpointer.save_checkpoint(
+            state_dict, epoch=1, max_shard_size="150KB"
+        )
 
         # Reload the output checkpoint file and compare to the original checkpoint. This
         # assumes we know what the name of the file is. This is fine, breaking this logic
@@ -340,8 +341,10 @@ class TestHFLlama2FullModelCheckpointer:
         output_state_dict_1 = safe_torch_load(output_file_1)
         output_state_dict_2 = safe_torch_load(output_file_2)
 
-        assert len(output_state_dict_1.keys()) + 1 == len(orig_state_dict_1.keys())
-        assert len(output_state_dict_2.keys()) + 1 == len(orig_state_dict_2.keys())
+        # Assert that the merged state dict is the same as the original merged state dict
+        assert len(output_state_dict_1.keys()) + len(
+            output_state_dict_2.keys()
+        ) + 2 == (len(orig_state_dict_1.keys()) + len(orig_state_dict_2.keys()))
 
     def test_load_save_adapter_only(
         self, tmp_path, single_file_checkpointer, llama2_hf_checkpoints
@@ -380,7 +383,7 @@ class TestHFLlama2FullModelCheckpointer:
     def test_save_checkpoint_in_peft_format(
         self,
         single_file_checkpointer: FullModelHFCheckpointer,
-        llama2_hf_checkpoints: Tuple[Path, Path],
+        llama2_hf_checkpoints: tuple[Path, Path],
     ):
         """
         Test save_checkpoint method within the FullModelCheckpointer for
@@ -523,7 +526,7 @@ class TestHFLlama2FullModelCheckpointer:
     def test_save_load_checkpoint_multiple_file_with_dcp(
         self,
         multi_file_checkpointer: FullModelHFCheckpointer,
-        llama2_hf_checkpoints: Tuple[Path, Path],
+        llama2_hf_checkpoints: tuple[Path, Path],
     ):
         """
         Test ``load_checkpoint`` method within the FullModelCheckpointer for multiple
@@ -751,8 +754,8 @@ class TestHFMistralRewardModelFullModelCheckpointer:
         output_file = Path.joinpath(
             checkpoint_file.parent.parent / "output_dir",
             "epoch_1",
-            SHARD_FNAME.format(cpt_idx="1".zfill(5), num_shards="1".zfill(5)),
-        ).with_suffix(".safetensors")
+            "model.safetensors",
+        )
         output_state_dict = safe_torch_load(output_file)
 
         assert len(output_state_dict.keys()) == len(orig_state_dict.keys()) - 1
@@ -908,8 +911,8 @@ class TestHFGemmaFullModelCheckpointer:
         output_file = Path.joinpath(
             checkpoint_file.parent.parent / "output_dir",
             "epoch_1",
-            SHARD_FNAME.format(cpt_idx="1".zfill(5), num_shards="1".zfill(5)),
-        ).with_suffix(".safetensors")
+            "model.safetensors",
+        )
         output_state_dict = safe_torch_load(output_file)
 
         assert len(output_state_dict.keys()) == len(orig_state_dict.keys())

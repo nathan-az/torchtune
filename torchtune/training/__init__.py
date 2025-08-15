@@ -11,9 +11,11 @@ from torchtune.training._activation_offloading import (
 from torchtune.training._compile import compile_loss, compile_model
 from torchtune.training._distributed import (
     gather_cpu_state_dict,
+    get_context_parallel_manager,
     get_distributed_backend,
     get_full_optimizer_state_dict,
     get_shard_conditions,
+    get_train_context,
     get_world_size_and_rank,
     init_distributed,
     is_distributed,
@@ -23,9 +25,10 @@ from torchtune.training._distributed import (
     prepare_mha_for_tp,
     set_torch_num_threads,
     shard_model,
+    VALID_BACKENDS_FOR_MEMORY_STATS,
     validate_no_params_on_meta_device,
 )
-from torchtune.training._grad_scaler import scale_grads
+from torchtune.training._grad_scaler import scale_grads, scale_grads_
 from torchtune.training._model_util import disable_dropout
 from torchtune.training._profiler import (
     DEFAULT_PROFILE_DIR,
@@ -57,6 +60,7 @@ from torchtune.training.checkpointing import (
     STEPS_KEY,
     TOTAL_EPOCHS_KEY,
     update_state_dict_for_classifier,
+    VAL_DATALOADER_KEY,
 )
 from torchtune.training.lr_schedulers import get_cosine_schedule_with_warmup, get_lr
 from torchtune.training.memory import (
@@ -102,6 +106,7 @@ __all__ = [
     "SEED_KEY",
     "STEPS_KEY",
     "TOTAL_EPOCHS_KEY",
+    "VAL_DATALOADER_KEY",
     "get_quantizer_mode",
     "get_cosine_schedule_with_warmup",
     "get_distributed_backend",
@@ -120,6 +125,7 @@ __all__ = [
     "shard_model",
     "get_shard_conditions",
     "validate_no_params_on_meta_device",
+    "VALID_BACKENDS_FOR_MEMORY_STATS",
     "gather_cpu_state_dict",
     "get_full_optimizer_state_dict",
     "load_from_full_model_state_dict",
@@ -139,7 +145,10 @@ __all__ = [
     "OffloadActivations",
     "FormattedCheckpointFiles",
     "scale_grads",
+    "scale_grads_",
     "get_distributed_backend",
     "disable_dropout",
     "DATALOADER_KEY",
+    "get_context_parallel_manager",
+    "get_train_context",
 ]

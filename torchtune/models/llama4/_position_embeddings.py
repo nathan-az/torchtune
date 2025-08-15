@@ -110,7 +110,6 @@ class Llama4ScaledRoPE(nn.Module):
         high_freq_factor: float,
         old_context_len: int,
     ):
-
         low_freq_wavelen = old_context_len / low_freq_factor
         high_freq_wavelen = old_context_len / high_freq_factor
         new_freqs = []
@@ -180,10 +179,14 @@ class Llama4ScaledRoPE(nn.Module):
         # tensor has shape [b, s, n_h, h_d // 2, 2]
         x_out = torch.stack(
             [
-                xshaped[..., 0] * rope_cache[..., 0]
-                - xshaped[..., 1] * rope_cache[..., 1],
-                xshaped[..., 1] * rope_cache[..., 0]
-                + xshaped[..., 0] * rope_cache[..., 1],
+                torch.sub(
+                    xshaped[..., 0] * rope_cache[..., 0],
+                    xshaped[..., 1] * rope_cache[..., 1],
+                ),
+                torch.add(
+                    xshaped[..., 1] * rope_cache[..., 0],
+                    xshaped[..., 0] * rope_cache[..., 1],
+                ),
             ],
             -1,
         )

@@ -6,7 +6,7 @@
 
 import os
 from enum import Enum
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 
@@ -21,12 +21,12 @@ else:
     BlockMask = torch.Tensor
 
 
-def get_world_size_and_rank() -> Tuple[int, int]:
+def get_world_size_and_rank() -> tuple[int, int]:
     """Function that gets the current world size (aka total number
     of ranks) and rank number of the current process in the default process group.
 
     Returns:
-        Tuple[int, int]: world size, rank
+        tuple[int, int]: world size, rank
     """
     if torch.distributed.is_available() and torch.distributed.is_initialized():
         return torch.distributed.get_world_size(), torch.distributed.get_rank()
@@ -45,6 +45,19 @@ def is_torch_npu_available() -> bool:
 
 
 is_npu_available = is_torch_npu_available()
+
+
+def is_torch_hpu_available() -> bool:
+    """Check the availability of HPU"""
+    try:
+        import habana_frameworks.torch  # noqa: F401
+
+        return torch.hpu.is_available()
+    except ImportError:
+        return False
+
+
+is_hpu_available = is_torch_hpu_available()
 
 
 def _get_local_rank() -> Optional[int]:
@@ -78,7 +91,6 @@ def _setup_device(device: torch.device) -> torch.device:
     device_type = device_support.device_type
     device_name = device_support.device_name
     torch_device = get_torch_device_namespace()
-
     if device.index is None:
         device = torch.device(type=device_type, index=local_rank)
 
@@ -107,6 +119,8 @@ def _get_device_type_from_env() -> str:
         device = "cuda"
     elif is_npu_available:
         device = "npu"
+    elif is_hpu_available:
+        device = "hpu"
     elif torch.xpu.is_available():
         device = "xpu"
     elif torch.mps.is_available():
@@ -171,7 +185,7 @@ def get_device(device: Optional[str] = None) -> torch.device:
     if device is None:
         device = _get_device_type_from_env()
     device = torch.device(device)
-    if device.type in ["cuda", "npu", "xpu"]:
+    if device.type in ["cuda", "npu", "xpu", "hpu"]:
         device = _setup_device(device)
     _validate_device_from_env(device)
     return device
@@ -220,6 +234,7 @@ class DeviceSupport(Enum):
     NPU = ("npu", "NPU", "hccl")
     XPU = ("xpu", "XPU", "ccl")
     MPS = ("mps", "MPS", "gloo")
+    HPU = ("hpu", "HPU", "hccl")
 
     def __init__(
         self,
@@ -265,3 +280,10 @@ def get_torch_device_namespace() -> any:
             f"Device namespace '{device_type}' not found in torch, try to load torch.cuda."
         )
         return torch.cuda
+
+
+def has_cuda_capability(major: int, minor: int) -> bool:
+    return torch.cuda.is_available() and torch.cuda.get_device_capability() >= (
+        major,
+        minor,
+    )
